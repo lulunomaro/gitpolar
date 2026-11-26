@@ -1,6 +1,6 @@
 # Ubuntu 服务器部署
 
-适用于 Ubuntu 22.04、Node.js 24 和本机两块已挂载的数据盘。容器部署仍使用仓库根目录的 compose.yaml，见 [NAS 部署](../../docs/NAS.md)。
+适用于 Ubuntu 22.04、Git 2.38 及以上、Node.js 24 和本机两块已挂载的数据盘。容器部署仍使用仓库根目录的 compose.yaml，见 [NAS 部署](../../docs/NAS.md)。
 
 ## 目录
 
@@ -23,7 +23,7 @@ repositories、lfs、procurement 通过 bind mount 映射进 /var/lib/gitpolar�
 
 ## 首次部署
 
-1. 安装 Git、Git LFS、curl、ca-certificates、xz-utils。下载官方 Node.js 24 Linux x64 压缩包并核对同一版本 SHASUMS256.txt，将运行时放到 /opt/gitpolar/runtime/node。
+1. 安装 Git 2.38 及以上、Git LFS、curl、ca-certificates、xz-utils。Ubuntu 22.04 自带 Git 2.34，需要按 [Git 官方 Linux 安装说明](https://git-scm.com/install/linux) 使用 ppa:git-core/ppa 升级；固件比较与合并依赖 merge-tree --write-tree，安装脚本会检查版本。下载官方 Node.js 24 Linux x64 压缩包并核对同一版本 SHASUMS256.txt，将运行时放到 /opt/gitpolar/runtime/node。
 2. 在该运行时安装固定版本的飞书 CLI：/opt/gitpolar/runtime/node/bin/npm install --global @larksuite/cli@1.0.100。执行时 PATH 中应包含 /opt/gitpolar/runtime/node/bin。
 3. 把已验证的发布放入 /opt/gitpolar/releases/提交号，执行 npm ci --omit=dev。发布包包含 public 中的查看器构建产物。
 4. 复制 gitpolar.env.example 到 /etc/gitpolar/gitpolar.env，设置实际 APP_ORIGIN、项管 open_id 和工作区策略；文件权限 0600。把专用飞书 config.json 放入 /var/lib/gitpolar/lark-cli，目录 0700、文件 0600、归服务用户所有。详见 [飞书登录](../../docs/LOGIN.md)。

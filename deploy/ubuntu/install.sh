@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $(id -u) == 0 ]] || { echo 'Run with sudo.' >&2; exit 1; }
+git_version=$(git --version | awk '{print $3}')
+IFS=. read -r git_major git_minor git_patch <<< "$git_version"
+if (( git_major < 2 || (git_major == 2 && git_minor < 38) )); then
+  echo 'Git 2.38 or newer is required for firmware merge comparison.' >&2
+  exit 1
+fi
+/opt/gitpolar/runtime/node/bin/node -e 'if(Number(process.versions.node.split(".")[0])<24)process.exit(1)'
 release=$(realpath "${1:?Usage: sudo bash deploy/ubuntu/install.sh /opt/gitpolar/releases/COMMIT}")
 service_user="${GITPOLAR_SERVICE_USER:-polarserver}"
 service_group=$(id -gn "$service_user")

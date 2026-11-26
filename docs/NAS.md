@@ -131,3 +131,7 @@ docker compose start
 ## 0.7.0 管理与采购
 
 网页登录只允许飞书；使用 CLI 扫码主入口或配置备用网页 OAuth。升级旧本地账号部署前，确认已有 CLI 操作者或已指定飞书项管。管理及账号说明见 [ADMIN.md](ADMIN.md)，采购/库存和飞书字段配置见 [PROCUREMENT.md](PROCUREMENT.md)。采购表自动加入 SQLite，附件在同一 DATA_DIR 中，备份时一起保留。未填写真实飞书仓库配置时，本地审批与入库仍持久化，外部同步显示待配置。
+
+## Ubuntu 主机方式
+
+不使用容器时，按 [Ubuntu 部署说明](../deploy/ubuntu/README.md) 配置 systemd、目录分类与数据盘。固件合并功能要求 Git 2.38 及以上，Ubuntu 22.04 系统自带的 Git 2.34 需要升级；Compose 使用的 Debian bookworm Git 满足该要求。
