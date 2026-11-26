@@ -110,7 +110,6 @@ test('real CLI success envelope binds QR and polling to the browser, isolates pe
   assert.equal(hiddenQr.status, 404);
   assert.equal(hiddenQr.cookie, undefined);
   assert.deepEqual((await poll(server, flow)).value, {status: 'pending'});
-  assert.equal((await start(server)).status, 409);
   const reused = await start(server, {cookie: flow.cookie});
   assert.deepEqual(reused.value, flow.value);
   assert.equal(reused.cookie, undefined);
@@ -168,6 +167,74 @@ test('real CLI success envelope binds QR and polling to the browser, isolates pe
   assert.equal(revoked.cookie, undefined);
 });
 
+test('independent browsers authorize concurrently with isolated CLI profiles and sessions', {timeout: 20_000}, async t => {
+  const server = await launch(t, {extra: {FEISHU_ALLOWED_TENANTS: 'nas-team'}});
+  const [alice, bob] = await Promise.all([start(server), start(server)]);
+  assert.equal(alice.status, 200, JSON.stringify(alice.value));
+  assert.equal(bob.status, 200, JSON.stringify(bob.value));
+  assert.notEqual(alice.value.id, bob.value.id);
+  assert.notEqual(alice.cookie, bob.cookie);
+  assert.equal((await poll(server, alice, bob.cookie)).status, 404);
+  assert.equal((await poll(server, bob, alice.cookie)).status, 404);
+  assert.equal((await request(server, alice.value.qrUrl, {cookie: bob.cookie})).status, 404);
+  const reused = await start(server, {cookie: alice.cookie});
+  assert.equal(reused.value.id, alice.value.id);
+  assert.equal(reused.cookie, undefined);
+
+  const trace = await server.trace();
+  const configFor = flow => trace.find(entry => entry.args[1] === 'qrcode' && entry.args.includes(flow.value.id + '.png')).configDir;
+  const aliceConfig = configFor(alice), bobConfig = configFor(bob);
+  assert.notEqual(aliceConfig, bobConfig);
+  for (const configDir of [aliceConfig, bobConfig]) {
+    assert.equal(dirname(configDir), join(server.data, 'lark-cli-login'));
+    assert.deepEqual(JSON.parse(await readFile(join(configDir, 'config.json'), 'utf8')).apps[0].users, []);
+  }
+  const identities = {
+    [basename(aliceConfig)]: {complete: true, completedId: 'ou_alice', userName: '成员 Alice'},
+    [basename(bobConfig)]: {complete: false, completedId: 'ou_bob', userName: '成员 Bob'}
+  };
+  await server.configure({flows: identities});
+  const aliceAuth = await untilStatus(server, alice, 'authorized');
+  assert.equal((await poll(server, bob)).value.status, 'pending');
+  assert.equal((await request(server, bob.value.qrUrl, {cookie: bob.cookie})).status, 200);
+  const aliceSession = await request(server, '/api/session', {cookie: aliceAuth.cookie});
+  assert.equal(aliceSession.value.user.name, '成员 Alice');
+
+  identities[basename(bobConfig)].complete = true;
+  await server.configure({flows: identities});
+  const bobAuth = await untilStatus(server, bob, 'authorized');
+  const bobSession = await request(server, '/api/session', {cookie: bobAuth.cookie});
+  assert.equal(bobSession.value.user.name, '成员 Bob');
+  assert.notEqual(aliceAuth.cookie, bobAuth.cookie);
+  assert.notEqual(aliceSession.value.user.id, bobSession.value.user.id);
+  assert.equal((await request(server, '/api/session', {cookie: aliceAuth.cookie})).value.user.id, aliceSession.value.user.id);
+  inspect(server, db => {
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 2);
+    assert.equal(db.prepare('SELECT open_id FROM feishu_identities WHERE user_id=?').get(aliceSession.value.user.id).open_id, 'ou_alice');
+    assert.equal(db.prepare('SELECT open_id FROM feishu_identities WHERE user_id=?').get(bobSession.value.user.id).open_id, 'ou_bob');
+  });
+  assert.equal(await readFile(join(server.personal, 'config.json'), 'utf8'), server.original);
+});
+
+test('cancelling one browser leaves another browser QR and authorization active', {timeout: 15_000}, async t => {
+  const server = await launch(t, {extra: {FEISHU_ALLOWED_TENANTS: 'nas-team'}});
+  const [cancelled, survivor] = await Promise.all([start(server), start(server)]);
+  assert.equal(cancelled.status, 200, JSON.stringify(cancelled.value));
+  assert.equal(survivor.status, 200, JSON.stringify(survivor.value));
+  assert.equal((await cli(server, '/cancel?id=' + cancelled.value.id, {method: 'POST', cookie: cancelled.cookie})).status, 200);
+  assert.equal((await poll(server, cancelled)).value.status, 'cancelled');
+  assert.equal((await poll(server, survivor)).value.status, 'pending');
+  assert.equal((await request(server, survivor.value.qrUrl, {cookie: survivor.cookie})).status, 200);
+  assert.equal((await cli(server, '/cancel?id=' + survivor.value.id, {method: 'POST', cookie: cancelled.cookie})).status, 404);
+  await server.configure({complete: true, completedId: 'ou_survivor'});
+  const authorized = await untilStatus(server, survivor, 'authorized');
+  assert.match(authorized.cookie, /^gitpolar_session=/);
+  inspect(server, db => {
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 1);
+    assert.equal(db.prepare('SELECT open_id FROM feishu_identities').get().open_id, 'ou_survivor');
+  });
+});
+
 test('cross-origin start/cancel and browser cookie substitution are rejected', {timeout: 15_000}, async t => {
   const server = await launch(t, {explicit: true});
   for (const origin of ['', 'https://foreign.invalid']) {
@@ -193,7 +260,7 @@ test('cross-origin start/cancel and browser cookie substitution are rejected', {
   assert.equal(await readFile(join(server.personal, 'config.json'), 'utf8'), server.original);
 });
 
-test('expiration stops the owned completion command and releases the single-flow lock', {timeout: 10_000}, async t => {
+test('expiration stops the owned completion command and allows a fresh browser flow', {timeout: 10_000}, async t => {
   const server = await launch(t, {settings: {expiresIn: 1}});
   const flow = await start(server);
   assert.equal(flow.status, 200);

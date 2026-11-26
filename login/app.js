@@ -153,7 +153,7 @@ async function start() {
     schedulePoll(current);
   } catch (error) {
     if (version !== bootVersion || lifecycle.signal.aborted) return;
-    finish('failed', error.status === 409 ? `已有一次登录正在进行，请稍后重试。${error.message}` : error.message);
+    finish('failed', error.message);
   } finally {
     if (version === bootVersion) {
       starting = false;

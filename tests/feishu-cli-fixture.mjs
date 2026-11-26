@@ -1,13 +1,19 @@
 // Both modes are test-only. The fake CLI never calls Feishu or the installed executable.
 import { appendFile, readFile, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
+import { basename } from 'node:path';
 
 const pause = ms => new Promise(done => setTimeout(done, ms));
 if (process.argv[2] !== '--server') {
   const args = process.argv.slice(2);
   const settingFile = process.env.FAKE_FEISHU_SCENARIO;
   async function scenario() {
-    for (;;) { try { return JSON.parse(await readFile(settingFile, 'utf8')); } catch { await pause(5); } }
+    for (;;) {
+      try {
+        const settings = JSON.parse(await readFile(settingFile, 'utf8'));
+        return {...settings, ...settings.flows?.[basename(process.env.LARKSUITE_CLI_CONFIG_DIR)]};
+      } catch { await pause(5); }
+    }
   }
   const safeArgs = args.map((arg, index) => args[index - 1] === '--device-code' ? '[private]' : arg);
   await appendFile(process.env.FAKE_FEISHU_TRACE, JSON.stringify({args: safeArgs, configDir: process.env.LARKSUITE_CLI_CONFIG_DIR}) + '\n');

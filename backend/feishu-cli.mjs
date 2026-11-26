@@ -17,7 +17,7 @@ const sourceConfig = resolve(explicitConfig || join(homedir(), '.lark-cli'));
 const runtimeConfig = join(dataRoot, 'lark-cli-login');
 const flows = new Map();
 const sessionKey = randomBytes(32);
-let active, cachedStatus, statusWork;
+let cachedStatus, statusWork;
 const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const publicFailure = '飞书登录未完成，请重新扫码；如仍失败，请联系管理员检查后端登录服务。';
 const loginFailures = {
@@ -202,7 +202,6 @@ async function finish(flow) {
     }
   } finally {
     flow.deviceCode = null;
-    if (active === flow) active = null;
     await cleanFlowFiles(flow).catch(() => {});
   }
 }
@@ -212,12 +211,10 @@ async function start(req, res) {
   const binding = cookie(req, flowCookie);
   const known = binding && [...flows.values()].find(flow => flow.binding === hash(binding) && flow.status === 'pending' && flow.expiresAt > Date.now());
   if (known) { await known.started; return json(res, responseFor(known)); }
-  if (active) fail(409, 'NAS 正在等待另一个浏览器完成飞书扫码，请稍后重试。');
-  // Claim the shared credential cache before the first await; only this flow can change it.
+  // Each flow owns its CLI profile, device authorization and QR; other browsers can sign in independently.
   const secret = random(), id = random();
   const flow = {id, binding: hash(secret), status: 'pending', expiresAt: Date.now() + 60_000,
     controller: new AbortController(), qrPath: join(directory, `${id}.png`)};
-  active = flow;
   flows.set(id, flow);
   for (const [key, previous] of flows) {
     if (previous !== flow && previous.expiresAt + 300_000 < Date.now()) flows.delete(key);
@@ -253,7 +250,6 @@ async function start(req, res) {
       clearTimeout(flow.timer);
       if (flow.status === 'pending') flow.status = Date.now() >= flow.expiresAt ? 'expired' : 'failed';
       flow.deviceCode = null;
-      if (active === flow) active = null;
       await cleanFlowFiles(flow);
       if (error?.status) throw error;
       fail(503, publicFailure);
@@ -313,5 +309,4 @@ export async function shutdownFeishuCli() {
   await Promise.allSettled([...flows.values()].map(flow => flow.work || flow.started));
   await Promise.allSettled([...flows.values()].map(cleanFlowFiles));
   flows.clear();
-  active = null;
 }
