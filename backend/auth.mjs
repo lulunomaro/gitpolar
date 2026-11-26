@@ -1,7 +1,7 @@
 import { randomBytes, createHash, scrypt as derive, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { db, getUser, userCount, now } from './store.mjs';
-import { origin, cookieName, sessionSeconds } from './config.mjs';
+import { origin, cookieName, sessionSeconds, authProvider } from './config.mjs';
 export const hash = text => createHash('sha256').update(text).digest('hex');
 export const random = () => randomBytes(32).toString('base64url');
 const scrypt = promisify(derive);
@@ -34,10 +34,10 @@ export async function createUser({ username, password, role = 'writer', name = '
   const result = db.prepare('INSERT INTO users(username,password_hash,display_name,role,created_at) VALUES(?,?,?,?,?)').run(username,encoded,String(name).slice(0,100),setup?'admin':role,now());
   return getUser(Number(result.lastInsertRowid));
 }
-export function newSession(res, user) {
+export function newSession(res, user, provider = 'local') {
   const secret = random();
   db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());
-  db.prepare('INSERT INTO sessions(hash,user_id,expires) VALUES(?,?,?)').run(hash(secret),user.id,Date.now()+sessionSeconds*1000);
+  db.prepare('INSERT INTO sessions(hash,user_id,expires,provider) VALUES(?,?,?,?)').run(hash(secret),user.id,Date.now()+sessionSeconds*1000,provider);
   res.setHeader('Set-Cookie',setCookie(cookieName,secret,sessionSeconds));
 }
 export function authenticate(req) {
@@ -52,15 +52,15 @@ export function authenticate(req) {
   if (token) {
     const record = db.prepare('SELECT id,user_id FROM tokens WHERE hash=?').get(hash(token));
     const user = record && getUser(record.user_id);
-    if (user && (!username || user.username.toLowerCase() === username.toLowerCase())) {
+    if (user && (authProvider !== 'feishu' || db.prepare('SELECT 1 FROM feishu_identities WHERE user_id=?').get(user.id)) && (!username || user.username.toLowerCase() === username.toLowerCase())) {
       db.prepare('UPDATE tokens SET last_used=? WHERE id=?').run(now(),record.id);
       return { user, token: true };
     }
   }
   const secret = cookie(req,cookieName);
   if (secret) {
-    const record = db.prepare('SELECT user_id FROM sessions WHERE hash=? AND expires>?').get(hash(secret),Date.now());
-    if (record) return { user:getUser(record.user_id),token:false };
+    const record = db.prepare('SELECT user_id,provider FROM sessions WHERE hash=? AND expires>?').get(hash(secret),Date.now());
+    if (record && (authProvider !== 'feishu' || record.provider === 'feishu')) return { user:getUser(record.user_id),token:false };
   }
   return null;
 }

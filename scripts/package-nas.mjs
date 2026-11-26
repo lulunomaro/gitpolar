@@ -6,10 +6,10 @@ import { pipeline } from 'node:stream/promises';
 import { ZipFile } from 'yazl';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const output=resolve(process.argv[2]||resolve(root,'artifacts','gitpolar-nas.zip'));
-const roots=['index.html','styles.css','app.js','demo.js','live.js','server.mjs','package.json','package-lock.json','README.md','THIRD_PARTY_NOTICES.md','Dockerfile','compose.yaml','.env.example','.gitignore','.dockerignore','backend','docs','templates','assets','viewer','public','tools','scripts','tests','solidworks-addin'];
+const roots=['index.html','styles.css','app.js','demo.js','live.js','server.mjs','package.json','package-lock.json','README.md','THIRD_PARTY_NOTICES.md','Dockerfile','compose.yaml','.env.example','.gitattributes','.gitignore','.dockerignore','admin','procurement','backend','docs','templates','assets','viewer','public','tools','scripts','tests','solidworks-addin'];
 const files=[];
 async function collect(path){
-  if(path==='solidworks-addin/bin'||path==='solidworks-addin/bin-native'||path==='solidworks-addin/vendor')return;
+  if(/^solidworks-addin\/(?:bin|bin-native[^/]*)$/.test(path)||path==='solidworks-addin/vendor')return;
   const info=await stat(resolve(root,path));
   if(info.isDirectory()){for(const entry of await readdir(resolve(root,path),{withFileTypes:true})){if(!entry.isSymbolicLink())await collect(path+'/'+entry.name);}}
   else if(path!=='assets/gitpolar-original.png')files.push(path);

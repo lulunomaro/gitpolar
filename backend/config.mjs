@@ -20,3 +20,6 @@ export const githubConfigured = Boolean(clientId && clientSecret);
 export const callbackUrl = new URL('/auth/github/callback', origin).href;
 
 export const maxPreviewBytes = Number(process.env.PREVIEW_MAX_BYTES || 128 * 1024 ** 2);
+
+// Password authentication is available only to isolated regression test fixtures. Normal runs use Feishu exclusively.
+export const authProvider = process.env.NODE_ENV === 'test' && process.env.AUTH_PROVIDER === 'local' ? 'local' : 'feishu';

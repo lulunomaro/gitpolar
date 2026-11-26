@@ -40,7 +40,7 @@ docker compose logs --tail=100 gitpolar
 
 也可把目录作为 Synology Container Manager / 其他 NAS 容器工具的 Compose 项目导入。镜像基于官方 `node:24-bookworm-slim`，安装 Git 和 Git LFS；构建时需要下载基础镜像、Debian 软件包和 package-lock.json 固定的 npm 依赖。
 
-浏览器打开 `APP_ORIGIN`。创建首位管理员后，在头像菜单添加成员和各自的访问令牌。请先使用一个小型仓库完成 clone / push，再迁入正式项目。
+启动前在 `.env` 填写飞书应用凭证、允许加入的租户/用户、指定项管 `FEISHU_ADMIN_OPEN_IDS`，并配置回调 `APP_ORIGIN/auth/feishu/callback`。浏览器打开 `APP_ORIGIN`，使用飞书登录；项管从 `/admin/` 管理成员角色和 NAS 状态，从 `/procurement/#permissions` 分配采购职责。成员自行生成 Git 访问令牌。请先使用一个小型仓库完成 clone / push，再迁入正式项目。
 
 ## 3. NAS 反向代理
 
@@ -97,6 +97,7 @@ data/
     polar-lab/PROJECT.git/
   lfs/
     REPOSITORY_ID/aa/bb/SHA256
+  procurement/files/      采购与发加工 STEP/DWG 原始附件
   tmp/                    网页提交使用的临时 index
 ```
 
@@ -121,3 +122,8 @@ docker compose start
 导出 ZIP 会流式读取 NAS 磁盘中的原文件，请为下载时的磁盘读取与局域网带宽预留资源。现有仓库若没有模板规则，参考 SolidWorks 指南配置 LFS；程序升级不会改写原有 Git 历史。
 
 三维预览资源已在 `public/` 内随项目发布，NAS 不需要安装 SolidWorks。原生文件的预览在 Windows 工作站用辅助脚本导出后提交，NAS 提供版本匹配与文件服务。默认 `PREVIEW_MAX_BYTES=134217728`，仅限制网页预览，不限制 Git/LFS 存储。修改查看器源码后，先执行 `npm ci`、`npm run build:viewer`，再重新构建镜像。
+
+
+## 0.7.0 管理与采购
+
+网页登录只允许飞书；升级旧本地账号部署前，先配置飞书应用和项管 open_id。管理及账号说明见 [ADMIN.md](ADMIN.md)，采购/库存和飞书字段配置见 [PROCUREMENT.md](PROCUREMENT.md)。采购表自动加入 SQLite，附件在同一 DATA_DIR 中，备份时一起保留。未填写真实飞书仓库配置时，本地审批与入库仍持久化，外部同步显示待配置。

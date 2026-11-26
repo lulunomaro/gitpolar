@@ -6,14 +6,16 @@
 | --- | --- |
 | `GET /api/health` | 无需登录的服务检查。 |
 | `GET /api/session` | 会话、初始化状态、工作区名、OAuth 配置和后端能力。 |
-| `POST /api/setup` | 仅在无用户时创建首位管理员。 |
-| `POST /api/login` / `POST /api/logout` | 本地账号登录与退出。 |
-| `GET/POST /api/users` | 管理员列出/创建成员，可选角色 admin/writer/reader。 |
+| `GET /auth/feishu` / `GET /auth/feishu/callback` | 正常部署唯一的网页登录与回调。 |
+| `POST /api/logout` | 退出当前会话。本地 setup/login 和 GitHub 登录在正常部署返回 403。 |
+| `GET /api/users` | 项管列出成员，成员通过飞书加入；角色修改见管理接口。 |
 | `GET/POST /api/tokens` | 查看令牌元数据/创建一个仅返回一次明文的令牌。 |
 | `DELETE /api/tokens/ID` | 撤销当前用户自己的令牌。 |
 | `GET /api/events` | 已登录用户的 SSE 仓库更新事件。 |
 | `GET/POST /api/repos` | 列出真实仓库/创建 bare 仓库。 |
 | `GET/PATCH /api/repos/NAME` | 仓库信息/修改描述。 |
+| `POST /api/repository-context/resolve` | 通过远端或持久仓库 ID 识别当前图纸归属，显式报告多远端歧义。 |
+| `GET /api/repos/NAME/context?ref=main&path=...` | 仓库身份、账号权限、固定版本与图纸在该版本中的状态。 |
 | `GET /api/repos/NAME/browse?ref=main&path=...` | 目录、文件、README、提交、分支及文件锁。 |
 | `GET /api/repos/NAME/files?ref=main` | 递归文件索引，不加载全部文件内容。 |
 | `GET /api/repos/NAME/raw?ref=main&path=...` | 下载 Git blob 或已还原的 LFS 实体。 |
@@ -79,3 +81,13 @@ GET /api/repos/:name/history?ref=REF&path=SOURCE&scope=dependencies&cursor=0
 按第一父链分页检查源文档和其历史依赖，dependencyOnly 标记“总装本身未变、引用零件或依赖成员变化”的提交；previewOnly 区分仅预览/配置清单发生变化的提交。scope 为 explicit 或 project-fallback；cursor 是已扫描提交偏移，可出现本页无相关提交但仍有 nextCursor 的情况。未传 scope 时保留普通路径历史行为。
 
 .gitpolar/previews.json version:2 每条 previews 条目包含 source、configuration、dependencies:[{path,oid}]，并使用 path/previewOid 的单模型或 components:[{id,name,source,configuration,path,previewOid,transform}] 的分体场景。依赖必须包含源文件；oid/previewOid 是该提交中经过 Git 过滤后的 blob ID。transform 是列主序 4×4 仿射矩阵，平移单位 mm。资产通过同一提交的 raw 接口读取。显式依赖过期时不提供看似最新的模型。scene 响应按独立资产计算大小并执行预览容量上限。
+
+
+## 客户端仓库上下文
+
+新增只读仓库解析协议支持不同工程分别持有持久仓库 ID，不按同名零件或共同提交猜归属。应用仓库接口可携带 X-Gitpolar-Repository-Id 进行身份校验，ID 与 NAME 不符时返回 409，响应头返回实际 ID。完整请求、响应、歧义处理和后续插件接入约定见 [客户端图纸与仓库归属](REPOSITORY_CONTEXT.md)。
+
+
+## NAS 管理、采购与飞书
+
+详见 [管理后台与飞书唯一登录](ADMIN.md) 和 [采购、发加工与库存接口](PROCUREMENT.md)。`GET /api/session` 返回 `authProvider: "feishu"`、`feishuLoginUrl`、`feishuCallbackUrl`、`feishuLinked` 及 admin/procurement/repositoryContext 能力标记。网页登录使用飞书签发的会话；Git/LFS 继续使用该账号的访问令牌。

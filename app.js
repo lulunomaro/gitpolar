@@ -90,11 +90,14 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
   function liveWelcome() {
     const title = backendError ? 'Backend unavailable' : session?.setupRequired ? 'Welcome to gitpolar' : 'Sign in to gitpolar';
-    return `<section class="live-welcome panel"><img class="site-logo" src="${GITPOLAR_LOGO}" width="64" height="64" alt=""><h1>${title}</h1><p>${backendError ? escape(backendError) : session?.setupRequired ? '初始化 NAS 工作区，创建第一个管理员账号。' : '登录后即可查看团队仓库、推送代码和管理 SolidWorks 图纸。'}</p><button class="button primary" data-action="live-login">${session?.setupRequired ? 'Initialize gitpolar' : 'Sign in'}</button></section>`;
+    return `<section class="live-welcome panel"><img class="site-logo" src="${GITPOLAR_LOGO}" width="64" height="64" alt=""><h1>${title}</h1><p>${backendError ? escape(backendError) : session?.setupRequired ? '初始化 NAS 工作区，创建第一个管理员账号。' : '登录后即可查看团队仓库、推送代码和管理 SolidWorks 图纸。'}</p><button class="button primary" data-action="live-login">${session?.authProvider==='feishu'?'使用飞书登录':session?.setupRequired ? 'Initialize gitpolar' : 'Sign in'}</button></section>`;
   }
   function localLogin() {
+    if(session?.authProvider==='feishu'){
+      openDialog('使用飞书登录 gitpolar',session.feishuLoginUrl?`<p class="dialog-note">使用队伍飞书账号登录，项管在后台分配仓库和采购权限。</p><div class="dialog-actions"><button class="button primary" type="button" data-action="feishu-login">使用飞书登录</button></div>`:`<p class="dialog-note">当前只允许飞书登录。请在 NAS 配置 FEISHU_APP_ID、FEISHU_APP_SECRET 和允许加入的飞书账号或租户。</p><p class="dialog-note">回调地址：<code>${escape(session.feishuCallbackUrl||'')}</code></p>`);return;
+    }
     const setup = session?.setupRequired;
-    openDialog(setup ? 'Initialize gitpolar' : 'Sign in to gitpolar',`<form id="local-login-form" data-setup="${Boolean(setup)}"><p class="dialog-note">${setup ? '首个账号拥有管理员权限。后续成员由管理员创建，或使用配置中允许的 GitHub 账号登录。' : '使用本地账号登录。Git 客户端使用账号下的访问令牌。'}</p><label class="field">Username<input name="username" autofocus required autocomplete="username" maxlength="48" pattern="[a-z0-9][a-z0-9_-]{0,47}"></label><label class="field">Password<input name="password" type="password" required minlength="10" autocomplete="${setup ? 'new-password' : 'current-password'}"></label><p class="field-error" id="login-error" role="alert" hidden></p><div class="dialog-actions">${session?.loginUrl ? '<button class="button" type="button" data-action="login">Sign in with GitHub</button>' : ''}<button class="button primary" type="submit">${setup ? 'Create administrator' : 'Sign in'}</button></div></form>`);
+    openDialog(setup ? 'Initialize gitpolar' : 'Sign in to gitpolar',`<form id="local-login-form" data-setup="${Boolean(setup)}"><p class="dialog-note">${setup ? '首个账号拥有管理员权限。后续成员由管理员创建，或使用配置中允许的 GitHub / 飞书账号登录。' : '使用本地账号登录。Git 客户端使用账号下的访问令牌。'}</p><label class="field">Username<input name="username" autofocus required autocomplete="username" maxlength="48" pattern="[a-z0-9][a-z0-9_-]{0,47}"></label><label class="field">Password<input name="password" type="password" required minlength="10" autocomplete="${setup ? 'new-password' : 'current-password'}"></label><p class="field-error" id="login-error" role="alert" hidden></p><div class="dialog-actions">${session?.loginUrl ? '<button class="button" type="button" data-action="login">Sign in with GitHub</button>' : ''}${session?.feishuLoginUrl ? '<button class="button" type="button" data-action="feishu-login">使用飞书登录</button>' : ''}<button class="button primary" type="submit">${setup ? 'Create administrator' : 'Sign in'}</button></div></form>`);
   }
   async function submitLocalLogin(form) {
     const values=Object.fromEntries(new FormData(form));
@@ -103,7 +106,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
   function liveAccount() {
     if(!session?.user) return localLogin();
-    openDialog(session.user.username,`<div class="account-menu"><p>Signed in as <strong>${escape(session.user.username)}</strong><br><small>${escape(session.user.role)} · ${escape(session.namespace)}</small></p><button data-action="access-tokens">${icon('key' in OCTICONS ? 'key' : 'lock')}Git access tokens</button>${session.user.role==='admin'?`<button data-action="manage-users">${icon('people')}Manage users</button>`:''}<button data-action="theme">${icon(theme==='light'?'moon':'sun')}Appearance: ${theme==='light'?'Light':'Dark'}</button><button data-action="logout">${icon('sign-out')}Sign out</button></div>`,'is-account-menu');
+    openDialog(session.user.username,`<div class="account-menu"><p>Signed in as <strong>${escape(session.user.username)}</strong><br><small>${escape(session.user.role)} · ${escape(session.namespace)}</small></p><button data-action="procurement">${icon('repo')}采购与库存</button>${session.feishuLoginUrl&&session.authProvider!=='feishu'?`<button data-action="feishu-link">${icon('link')}${session.feishuLinked?'飞书账号已绑定':'绑定飞书账号'}</button>`:''}<button data-action="access-tokens">${icon('key' in OCTICONS ? 'key' : 'lock')}Git access tokens</button>${session.user.role==='admin'?`<button data-action="admin">${icon('gear')}管理后台</button>`:''}<button data-action="theme">${icon(theme==='light'?'moon':'sun')}Appearance: ${theme==='light'?'Light':'Dark'}</button><button data-action="logout">${icon('sign-out')}Sign out</button></div>`,'is-account-menu');
   }
   async function tokenMenu() {
     try {
@@ -441,7 +444,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     return `<button type="button" class="button${small ? ' small' : ''}" data-action="star" data-repo="${escape(repo.name)}" aria-pressed="${active}" aria-label="${active ? 'Unstar' : 'Star'} ${escape(repo.name)}">${icon(active ? 'star-fill' : 'star')}${active ? 'Starred' : 'Star'}</button>`;
   }
   function renderNav(repo, tab, page) {
-    document.querySelector('.drawer-nav').innerHTML = pages.map(([key, label, symbol]) => `<a href="#/${key === 'home' ? '' : key}"${key === page ? ' aria-current="page"' : ''}>${icon(symbol)}${label}</a>`).join('');
+    document.querySelector('.drawer-nav').innerHTML = pages.map(([key, label, symbol]) => `<a href="#/${key === 'home' ? '' : key}"${key === page ? ' aria-current="page"' : ''}>${icon(symbol)}${label}</a>`).join('') + (onServer ? `<a href="/procurement/">${icon('repo')}采购与库存</a>${session?.user?.role==='admin'?`<a href="/admin/">${icon('gear')}管理后台</a>`:''}` : '');
     const topNav = document.querySelector('#top-nav');
     topNav.hidden = !repo;
     topNav.innerHTML = repo ? Object.entries(tabs).map(([key, [label, symbol]]) => {
@@ -790,6 +793,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
   async function login() {
     await sessionReady;
+    if(session?.authProvider==='feishu'){if(session.feishuLoginUrl)location.assign(session.feishuLoginUrl);else localLogin();return;}
     if (session?.loginUrl) { location.assign(session.loginUrl); return; }
     openDialog('Sign in with GitHub', session?.callbackUrl
       ? `<p class="dialog-note">请先在 GitHub 注册 OAuth App，并在服务端配置 Client ID 和 Client Secret。授权回调地址：</p><div class="copy-field"><input class="form-input" readonly aria-label="OAuth callback URL" value="${escape(session.callbackUrl)}"><button class="button" data-action="copy-value" aria-label="Copy callback URL">${icon('copy')}</button></div><p class="dialog-note setup-note">配置方法见项目目录中的 README.md。</p>`
@@ -851,6 +855,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     switch (action) {
       case 'live-login': localLogin(); break;
       case 'access-tokens': tokenMenu(); break;
+      case 'procurement': if(onServer)location.assign('/procurement/'); break;
+      case 'feishu-login': if(session?.feishuLoginUrl)location.assign(session.feishuLoginUrl); break;
+      case 'feishu-link': if(session?.feishuLoginUrl)location.assign('/auth/feishu?link=1'); break;
+      case 'admin': if(onServer && session?.user?.role==='admin')location.assign('/admin/'); break;
       case 'manage-users': manageUsers(); break;
       case 'revoke-token': api('tokens/'+button.dataset.token,{method:'DELETE'}).then(tokenMenu).catch(error=>notify(error.message)); break;
       case 'search': search(); break;
@@ -934,6 +942,6 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   const sessionReady = loadSession();
   const url = new URL(location.href);
   const result = url.searchParams.get('auth');
-  if (result === 'cancelled' || result === 'failed' || result === 'not-allowed') { notify(result === 'not-allowed' ? 'Ask the administrator to add your GitHub login to GITHUB_ALLOWED_USERS.' : result === 'cancelled' ? 'GitHub authorization was cancelled.' : 'GitHub sign-in failed. Please try again.'); url.searchParams.delete('auth'); history.replaceState(null,'',url); }
+  if (['cancelled','failed','not-allowed','identity-conflict'].includes(result)) { notify(result === 'not-allowed' ? '此账号尚未获准加入，请联系项管配置 GitHub / 飞书允许名单。' : result === 'identity-conflict' ? '此第三方身份已绑定其他账号，请联系项管。' : result === 'cancelled' ? '第三方登录已取消。' : '第三方登录失败，请检查服务端应用配置后重试。'); url.searchParams.delete('auth'); history.replaceState(null,'',url); }
 })();
 

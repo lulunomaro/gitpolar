@@ -18,7 +18,7 @@ async function portNumber(){const server=createServer();server.listen(0,'127.0.0
 async function launch(data,extra={},imports=[]) {
   const port=Number(extra.PORT)||await portNumber(),origin=`http://127.0.0.1:${port}`;
   let logs='';
-  const child=spawn(process.execPath,[...imports,'server.mjs'],{cwd:root,windowsHide:true,env:{...process.env,HOST:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin,DATA_DIR:join(data,'storage'),WORKSPACE_NAME:'polar-lab',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:'',...extra}});
+  const child=spawn(process.execPath,[...imports,'server.mjs'],{cwd:root,windowsHide:true,env:{...process.env,NODE_ENV:'test',AUTH_PROVIDER:'local',HOST:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin,DATA_DIR:join(data,'storage'),WORKSPACE_NAME:'polar-lab',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:'',...extra}});
   child.stderr.on('data',data=>logs+=data);child.stdout.on('data',data=>logs+=data);
   for(let attempt=0;attempt<100;attempt++){
     if(child.exitCode!==null)throw new Error(logs);
@@ -338,4 +338,169 @@ test('repository tree, branch management and version-specific browsing', {timeou
     assert.equal((await request(server,query('browse',head,filePath),{cookie})).value.file.text,'厚度：3 mm');
     t.diagnostic('Lazy Chinese directory trees, branch-isolated content, immutable history, missing paths, branch mutations and reader permissions verified.');
   } finally {await server.stop();}
+});
+
+
+test('repository context resolves CAD ownership across projects without using filenames or shared commits', {timeout:90000}, async t=>{
+  const directory=await mkdtemp(join(tmpdir(),'gitpolar-repository-context-'));
+  let server=await launch(directory);
+  try {
+    const setup=await request(server,'/api/setup',{method:'POST',body:{username:'admin',password:'test-only-password'}}),cookie=setup.cookie;
+    const token=(await request(server,'/api/tokens',{method:'POST',cookie,body:{name:'Repository context fixture'}})).value.token;
+    const create=async name=>{const result=await request(server,'/api/repos',{method:'POST',cookie,body:{name,initialize:false,cad:false}});assert.equal(result.status,201);return result.value;};
+    const first=await create('project-a'),second=await create('project-b'),empty=await create('empty-project');
+    const remote=name=>server.origin+'/polar-lab/'+name+'.git';
+    const git=gitClient('admin',token),work=join(directory,'working-copy'),path='零件/共享支架 #1+.SLDPRT';
+    await git(['clone',remote(first.name),work],root);await configure(git,work,'context-fixture');
+    await mkdir(join(work,'零件'),{recursive:true});await writeFile(join(work,path),Buffer.from('fixture-only CAD source, no SolidWorks process is used'));
+    await git(['add','--all'],work);await git(['commit','-m','Shared assembly fixture'],work);
+    await git(['push','origin','HEAD:main'],work);await git(['push',remote(second.name),'HEAD:main'],work);
+    const baseline=(await git(['rev-parse','HEAD'],work)).stdout.trim();
+    const resolver='/api/repository-context/resolve';
+    const resolveContext=(body,options={})=>request(server,resolver,{method:'POST',cookie,body,...options});
+    const query=name=>'/api/repos/'+name+'/context?'+new URLSearchParams({ref:'main',path});
+
+    await t.test('same path and identical Git history remain two distinct repositories',async()=>{
+      const values=await Promise.all([first,second,first].map(repo=>resolveContext({remotes:[{name:'origin',url:remote(repo.name)}],ref:'main',path})));
+      assert.deepEqual(values.map(result=>result.value.repository.id),[first.id,second.id,first.id]);
+      for(const result of values){assert.equal(result.status,200);assert.equal(result.value.resolved,true);assert.equal(result.value.matchedBy,'remote');assert.equal(result.value.revision.oid,baseline);assert.equal(result.value.document.path,path);assert.equal(result.value.document.state,'tracked');assert.equal(result.value.permissions.write,true);}
+      const direct=await request(server,query(first.name),{cookie});assert.equal(direct.status,200);assert.equal(direct.value.repository.id,first.id);assert.equal(direct.response.headers.get('x-gitpolar-repository-id'),first.id);
+      assert.equal((await request(server,'/api/session')).value.capabilities.repositoryContext,true);
+    });
+
+    await t.test('new documents, unpublished branches and empty repositories retain known ownership',async()=>{
+      const uncommitted=await resolveContext({remotes:[{name:'origin',url:remote(first.name)}],path:'零件/还未提交.SLDPRT'});
+      assert.equal(uncommitted.value.repository.id,first.id);assert.equal(uncommitted.value.document.state,'not-in-revision');
+      const unpublished=await resolveContext({remotes:[{name:'origin',url:remote(first.name)}],ref:'feature/not-pushed',path});
+      assert.equal(unpublished.status,200);assert.equal(unpublished.value.resolved,true);assert.equal(unpublished.value.repository.id,first.id);assert.equal(unpublished.value.revision.available,false);assert.equal(unpublished.value.revision.reason,'ref-not-on-server');assert.equal(unpublished.value.document.state,'revision-unavailable');
+      const unborn=await resolveContext({remotes:[{name:'origin',url:remote(empty.name)}],path:'总装.SLDASM'});
+      assert.equal(unborn.status,200);assert.equal(unborn.value.repository.id,empty.id);assert.equal(unborn.value.revision.available,false);
+    });
+
+    await t.test('multiple remotes require a choice while an explicit binding stays stable',async()=>{
+      const remotes=[{name:'origin',url:remote(first.name)},{name:'upstream',url:remote(second.name)}];
+      const ambiguous=await resolveContext({remotes});assert.equal(ambiguous.status,409);assert.equal(ambiguous.value.reason,'ambiguous-remotes');assert.equal(ambiguous.value.resolved,false);assert.deepEqual(new Set(ambiguous.value.candidates.map(repo=>repo.id)),new Set([first.id,second.id]));
+      const missingOrigin=await resolveContext({remotes:[{name:'origin',url:remote('deleted-project')},remotes[1]]});assert.equal(missingOrigin.status,409);assert.equal(missingOrigin.value.reason,'ambiguous-remotes');assert(missingOrigin.value.remoteChoices.some(choice=>choice.repositoryName==='deleted-project'&&choice.repositoryId===null));
+      const preferred=await resolveContext({remotes,preferredRemote:'upstream'});assert.equal(preferred.value.repository.id,second.id);assert.deepEqual(preferred.value.matchedRemotes,['upstream']);
+      const pinned=await resolveContext({repositoryId:first.id,remotes});assert.equal(pinned.value.repository.id,first.id);assert.equal(pinned.value.matchedBy,'repository-id');
+      const conflict=await resolveContext({repositoryId:first.id,remotes,preferredRemote:'upstream'});assert.equal(conflict.status,409);assert.equal(conflict.value.reason,'identity-conflict');
+      const duplicate=await resolveContext({remotes:[{name:'origin',url:remote(first.name)+'/'},{name:'backup',url:remote(first.name).replace(/\.git$/,'')}]});assert.equal(duplicate.status,200);assert.equal(duplicate.value.repository.id,first.id);
+      const unknown=await resolveContext({repositoryId:'00000000-0000-0000-0000-000000000000',remotes:[remotes[0]]});assert.equal(unknown.status,404);assert.equal(unknown.value.reason,'repository-id-not-found');
+    });
+
+    await t.test('foreign or missing remotes never fall back by document name or commit',async()=>{
+      for(const url of ['https://github.com/polar-lab/project-a.git','https://example.invalid/polar-lab/project-a.git',server.origin+'/another-team/project-a.git','git@example.invalid:polar-lab/project-a.git']){
+        const result=await resolveContext({remotes:[{name:'origin',url}],ref:baseline,path});assert.equal(result.status,200);assert.equal(result.value.resolved,false);assert.equal(result.value.reason,'foreign-remote');assert.equal(result.value.repository,undefined);
+      }
+      const absent=await resolveContext({remotes:[{name:'origin',url:remote('absent-project')}],path});assert.equal(absent.status,404);assert.equal(absent.value.reason,'repository-not-found');
+      assert.equal((await resolveContext({path})).value.reason,'no-repository-identity');
+      for(const body of [[],{remotes:'origin'},{remotes:[{url:remote(first.name)}]},{remotes:[{name:'origin',url:server.origin.replace('://','://user:secret@')+'/polar-lab/project-a.git'}]},{repositoryId:first.id,path:'C:/CAD/plate.SLDPRT'},{repositoryId:first.id,path:'../plate.SLDPRT'},{repositoryId:first.id,path:'零件\\plate.SLDPRT'},{repositoryId:first.id,ref:'-bad'},{remotes:[],preferredRemote:'absent'}]){
+        const invalid=await resolveContext(body);assert.equal(invalid.status,400,JSON.stringify(body));
+      }
+    });
+
+    await t.test('authentication, read-only accounts and identity-pinned writes keep their boundaries',async()=>{
+      assert.equal((await request(server,resolver,{method:'POST',body:{repositoryId:first.id}})).status,401);
+      assert.equal((await request(server,query(first.name))).status,401);
+      await request(server,'/api/users',{method:'POST',cookie,body:{username:'reader',password:'test-only-password',role:'reader'}});
+      const reader=(await request(server,'/api/login',{method:'POST',body:{username:'reader',password:'test-only-password'}})).cookie;
+      const read=await resolveContext({repositoryId:first.id},{cookie:reader});assert.equal(read.status,200);assert.equal(read.value.permissions.write,false);
+      assert.equal((await resolveContext({repositoryId:first.id},{cookie:reader,headers:{origin:'https://other.example'}})).status,403);
+      const bearer=await request(server,resolver,{method:'POST',token,body:{repositoryId:first.id},headers:{origin:''}});assert.equal(bearer.status,200);
+      const mismatch=await request(server,'/api/repos/'+first.name+'/file',{method:'PUT',cookie,headers:{'X-Gitpolar-Repository-Id':second.id},body:{branch:'main',path:'wrong-project.txt',text:'must not be written',expectedHead:baseline}});assert.equal(mismatch.status,409);
+      assert.equal((await request(server,query(first.name),{cookie})).value.revision.oid,baseline);
+      assert.equal((await request(server,query(first.name),{cookie,headers:{'X-Gitpolar-Repository-Id':second.id}})).status,409);
+      const correct=await request(server,'/api/repos/'+first.name+'/file',{method:'PUT',cookie,headers:{'X-Gitpolar-Repository-Id':first.id},body:{branch:'main',path:'owned.txt',text:'correct repository',expectedHead:baseline}});assert.equal(correct.status,200);
+      const unchanged=await request(server,query(second.name),{cookie});assert.equal(unchanged.value.revision.oid,baseline);
+      assert.equal((await request(server,query(first.name),{cookie:reader})).status,200);
+    });
+
+    await t.test('repository IDs survive a backend restart and a changed server address',async()=>{
+      const oldRemote=remote(first.name),oldPort=server.port;await server.stop();let newPort=await portNumber();while(newPort===oldPort)newPort=await portNumber();server=await launch(directory,{PORT:String(newPort)});
+      const rebound=await request(server,resolver,{method:'POST',token,body:{repositoryId:first.id,remotes:[{name:'origin',url:oldRemote}],path}});
+      assert.equal(rebound.status,200);assert.equal(rebound.value.repository.id,first.id);assert.equal(rebound.value.repository.cloneUrl,remote(first.name));assert.equal(rebound.value.matchedBy,'repository-id');assert.deepEqual(rebound.value.matchedRemotes,[]);
+      const byAddress=await request(server,resolver,{method:'POST',token,body:{remotes:[{name:'origin',url:remote(second.name)}],path}});assert.equal(byAddress.value.repository.id,second.id);
+    });
+    t.diagnostic('Stateless project routing, shared histories, uncommitted CAD paths, unpublished refs, remote ambiguity, pinned writes, reader access and restart persistence verified without SolidWorks.');
+  } finally {await server.stop();}
+});
+
+
+test('NAS administration enforces roles and manages real users, repositories, storage and locks', {timeout:60000}, async t => {
+  const directory = await mkdtemp(join(tmpdir(),'gitpolar-admin-'));
+  let server = await launch(directory,{GITHUB_CLIENT_ID:'admin-test-client',GITHUB_CLIENT_SECRET:'private-oauth-secret-for-admin-test'});
+  try {
+    const setup = await request(server,'/api/setup',{method:'POST',body:{username:'manager',password:'test-only-password'}});
+    const cookie = setup.cookie, managerId = setup.value.user.id;
+    for (const path of ['/api/admin/overview','/api/admin/users','/api/admin/repositories','/api/admin/locks']) assert.equal((await request(server,path)).status,401);
+    const member = await request(server,'/api/admin/users',{method:'POST',cookie,body:{username:'engineer',password:'test-only-password',name:'机械组员',role:'writer'}});
+    assert.equal(member.status,201); const memberId = member.value.user.id;
+    const reader = await request(server,'/api/admin/users',{method:'POST',cookie,body:{username:'observer',password:'test-only-password',role:'reader'}});
+    assert.equal(reader.status,201);
+    const memberLogin = await request(server,'/api/login',{method:'POST',body:{username:'engineer',password:'test-only-password'}});
+    const readerLogin = await request(server,'/api/login',{method:'POST',body:{username:'observer',password:'test-only-password'}});
+    for (const login of [memberLogin,readerLogin]) {
+      for (const path of ['/api/admin/overview','/api/admin/users','/api/admin/repositories','/api/admin/locks']) assert.equal((await request(server,path,{cookie:login.cookie})).status,403);
+      assert.equal((await request(server,'/api/admin/users/'+managerId,{method:'PATCH',cookie:login.cookie,body:{role:'reader'}})).status,403);
+    }
+    assert.equal((await request(server,'/api/admin/users/'+managerId,{method:'PATCH',cookie,body:{role:'writer'}})).status,409);
+    assert.equal((await request(server,'/api/admin/users/'+memberId,{method:'PATCH',cookie,body:{role:'owner'}})).status,400);
+    assert.equal((await request(server,'/api/admin/users/'+memberId,{method:'PATCH',cookie,body:{github_id:1}})).status,400);
+    assert.equal((await request(server,'/api/admin/users/'+memberId,{method:'PATCH',cookie,body:{name:'Cross-site'},headers:{origin:'https://other.example'}})).status,403);
+    assert.equal((await request(server,'/api/admin/users',{method:'POST',cookie,body:[]})).status,400);
+    const updated = await request(server,'/api/admin/users/'+memberId,{method:'PATCH',cookie,body:{name:'工程师',role:'reader'}});
+    assert.equal(updated.status,200); assert.equal(updated.value.user.name,'工程师');
+    const memberToken = (await request(server,'/api/tokens',{method:'POST',cookie:memberLogin.cookie,body:{name:'Workstation'}})).value.token;
+    assert.equal((await request(server,'/api/repos',{method:'POST',token:memberToken,body:{name:'denied'}})).status,403);
+    await request(server,'/api/admin/users/'+memberId,{method:'PATCH',cookie,body:{role:'writer'}});
+    const created = await request(server,'/api/repos',{method:'POST',cookie,body:{name:'team-cad',description:'真实 NAS 管理测试',initialize:true}});
+    assert.equal(created.status,201);
+    const lock = await request(server,'/api/repos/team-cad/locks',{method:'POST',cookie:memberLogin.cookie,body:{path:'README.md',ref:'main'}});
+    assert.equal(lock.status,201);
+    const locks = await request(server,'/api/admin/locks',{cookie});
+    assert.equal(locks.value.locks[0].repositoryName,'team-cad'); assert.equal(locks.value.locks[0].ownerName,'engineer');
+    assert.equal((await request(server,'/api/admin/locks/'+lock.value.lock.id,{method:'DELETE',cookie:readerLogin.cookie})).status,403);
+    assert.equal((await request(server,'/api/admin/locks/'+lock.value.lock.id,{method:'DELETE',cookie})).status,200);
+    assert.equal((await request(server,'/api/admin/locks/'+lock.value.lock.id,{method:'DELETE',cookie})).status,404);
+    assert.equal((await request(server,'/api/repos/team-cad/locks',{cookie})).value.locks.length,0);
+    const binary = randomBytes(12873), oid = createHash('sha256').update(binary).digest('hex');
+    const batch = await fetch(server.origin+'/polar-lab/team-cad.git/info/lfs/objects/batch',{method:'POST',headers:{Authorization:'Bearer '+memberToken,'Content-Type':'application/json'},body:JSON.stringify({operation:'upload',objects:[{oid,size:binary.length}]})});
+    assert.equal(batch.status,200);const uploaded = await fetch((await batch.json()).objects[0].actions.upload.href,{method:'PUT',headers:{Authorization:'Bearer '+memberToken},body:binary});assert.equal(uploaded.status,200);
+    await mkdir(join(directory,'storage','repositories','polar-lab','broken-cad.git'),{recursive:true});
+    assert.equal((await request(server,'/api/repos',{method:'POST',cookie,body:{name:'broken-cad'}})).status,500);
+    const report = await request(server,'/api/admin/overview?refresh=1',{cookie});
+    assert.equal(report.status,200);assert.equal(report.value.service.name,'gitpolar');assert.equal(report.value.counts.repositories,2);assert.equal(report.value.counts.errorRepositories,1);assert.equal(report.value.counts.users,3);
+    assert.equal(report.value.storage.lfsBytes,binary.length);assert(report.value.storage.gitBytes>0);assert(report.value.storage.databaseBytes>0);
+    assert.equal(report.value.storage.totalBytes,report.value.storage.gitBytes+report.value.storage.lfsBytes+report.value.storage.databaseBytes+report.value.storage.otherBytes);
+    assert.equal(report.value.deployment.githubConfigured,true);assert.equal(report.value.deployment.origin,server.origin);
+    assert(!JSON.stringify(report.value).includes('private-oauth-secret-for-admin-test'));
+    const repos = await request(server,'/api/admin/repositories?refresh=1',{cookie});
+    const ready = repos.value.repositories.find(repo=>repo.name==='team-cad');
+    assert.equal(ready.lfsBytes,binary.length);assert.equal(ready.lfsObjects,1);assert.equal(ready.branchCount,1);assert.equal(ready.defaultBranch,'main');assert.match(ready.cloneUrl,/team-cad.git$/);
+    assert.equal(repos.value.repositories.find(repo=>repo.name==='broken-cad').status,'error');
+    const users = await request(server,'/api/admin/users',{cookie});
+    assert(users.value.users.every(user=>!('password_hash' in user)&&!('hash' in user)&&!('password' in user)));
+    assert.equal(users.value.users.find(user=>user.id===memberId).tokens,1);
+    assert.equal((await request(server,'/api/admin/users/'+memberId+'/password',{method:'POST',cookie,body:{password:'short'}})).status,400);
+    assert.equal((await request(server,'/api/admin/users/'+memberId+'/password',{method:'POST',cookie,body:{password:'replacement-password'}})).status,200);
+    assert.equal((await request(server,'/api/repos',{token:memberToken})).status,401);
+    assert.equal((await request(server,'/api/session',{cookie:memberLogin.cookie})).value.user,null);
+    assert.equal((await request(server,'/api/login',{method:'POST',body:{username:'engineer',password:'test-only-password'}})).status,401);
+    const freshLogin = await request(server,'/api/login',{method:'POST',body:{username:'engineer',password:'replacement-password'}});assert.equal(freshLogin.status,200);
+    const freshToken = (await request(server,'/api/tokens',{method:'POST',cookie:freshLogin.cookie,body:{name:'Reissued'}})).value.token;
+    assert.equal((await request(server,'/api/admin/users/'+memberId+'/credentials',{method:'DELETE',cookie})).status,200);
+    assert.equal((await request(server,'/api/repos',{token:freshToken})).status,401);
+    assert.equal((await request(server,'/api/session',{cookie:freshLogin.cookie})).value.user,null);
+    const second = await request(server,'/api/admin/users',{method:'POST',cookie,body:{username:'co-manager',password:'test-only-password',role:'admin'}});
+    const race = await Promise.all([managerId,second.value.user.id].map(id=>request(server,'/api/admin/users/'+id,{method:'PATCH',cookie,body:{role:'writer'}})));
+    assert(race.some(result=>result.status===200));assert(race.some(result=>[403,409].includes(result.status)));
+    const allNames = ['manager','co-manager']; let finalAdmin;
+    for(const username of allNames) {const login=await request(server,'/api/login',{method:'POST',body:{username,password:'test-only-password'}});if(login.value.user.role==='admin')finalAdmin={username,cookie:login.cookie};}
+    assert(finalAdmin);assert.equal((await request(server,'/api/admin/overview',{cookie:finalAdmin.cookie})).value.counts.admins,1);
+    await server.stop();server=await launch(directory);
+    const after = await request(server,'/api/login',{method:'POST',body:{username:finalAdmin.username,password:'test-only-password'}});
+    assert.equal((await request(server,'/api/admin/overview',{cookie:after.cookie})).value.counts.users,4);
+    assert.equal((await request(server,'/api/admin/users',{cookie:after.cookie})).value.users.find(user=>user.id===memberId).name,'工程师');
+    t.diagnostic('Real Git/LFS bytes, failed repository records, role changes, revocation and final administrator protection survived restart.');
+  } finally { await server.stop(); }
 });

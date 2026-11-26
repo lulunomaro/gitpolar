@@ -6,16 +6,24 @@ import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 const envFile=fileURLToPath(new URL('./.env',import.meta.url));
 if(existsSync(envFile))loadEnvFile(envFile);
-const {origin,host,port,namespace,githubConfigured}=await import('./backend/config.mjs');
+const {origin,host,port,namespace,githubConfigured,authProvider}=await import('./backend/config.mjs');
 const {repository,db}=await import('./backend/store.mjs');
 const {HttpError,requireAuth,json}=await import('./backend/auth.mjs');
 const {git,smartHttp,installHook}=await import('./backend/git.mjs');
 const {lfs}=await import('./backend/lfs.mjs');
 const {api}=await import('./backend/api.mjs');
 const {beginOAuth,finishOAuth}=await import('./backend/oauth.mjs');
+const {beginFeishu,finishFeishu}=await import('./backend/feishu.mjs');
+const {startWarehouseSync}=await import('./backend/feishu-warehouse.mjs');
 const events=new EventEmitter();events.setMaxListeners(1000);
 const changed=name=>events.emit('repository',name);
 const assets=new Map([
+  ['/procurement',['procurement/index.html','text/html; charset=utf-8']],['/procurement/',['procurement/index.html','text/html; charset=utf-8']],
+  ['/procurement/index.html',['procurement/index.html','text/html; charset=utf-8']],['/procurement/app.js',['procurement/app.js','text/javascript; charset=utf-8']],
+  ['/procurement/styles.css',['procurement/styles.css','text/css; charset=utf-8']],['/procurement-viewer.js',['public/procurement-viewer.js','text/javascript; charset=utf-8']],
+  ['/admin',['admin/index.html','text/html; charset=utf-8']],['/admin/',['admin/index.html','text/html; charset=utf-8']],
+  ['/admin/index.html',['admin/index.html','text/html; charset=utf-8']],
+  ['/admin/admin.js',['admin/admin.js','text/javascript; charset=utf-8']],['/admin/admin.css',['admin/admin.css','text/css; charset=utf-8']],
   ['/', ['index.html','text/html; charset=utf-8']],['/index.html',['index.html','text/html; charset=utf-8']],
   ['/viewer.js',['public/viewer.js','text/javascript; charset=utf-8']],['/cad-worker.js',['public/cad-worker.js','text/javascript; charset=utf-8']],
   ['/cad-vendor/occt-import-js.js',['public/cad-vendor/occt-import-js.js','text/javascript; charset=utf-8']],['/cad-vendor/occt-import-js.wasm',['public/cad-vendor/occt-import-js.wasm','application/wasm']],
@@ -34,6 +42,9 @@ async function handle(req,res) {
   if(path==='/cad-worker.js')res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'unsafe-eval'; connect-src 'self'");
   if(path.startsWith('/api/'))return api(req,res,path,url.searchParams,changed,events);
   if(path==='/auth/logout'&&req.method==='POST')return api(req,res,'/api/logout',url.searchParams,changed,events);
+  if(path==='/auth/feishu'&&req.method==='GET')return beginFeishu(req,res,url.searchParams);
+  if(path==='/auth/feishu/callback'&&req.method==='GET')return finishFeishu(req,res,url.searchParams);
+  if(authProvider==='feishu'&&path.startsWith('/auth/github'))throw new HttpError(403,'Only Feishu sign-in is enabled.');
   if(githubConfigured&&path==='/auth/github'&&req.method==='GET')return beginOAuth(res);
   if(githubConfigured&&path==='/auth/github/callback'&&req.method==='GET')return finishOAuth(req,res,url.searchParams);
   const match=path.match(/^\/([a-z0-9][a-z0-9_-]{0,47})\/([a-z0-9][a-z0-9_-]{0,47})\.git(\/.*)$/);
@@ -64,5 +75,6 @@ server.listen(port,host,()=>{
   console.log(`gitpolar listening on ${host}:${port}. Open ${origin.origin}`);
   console.log(`${version}; Smart HTTP + Git LFS enabled; workspace ${namespace}`);
 });
-function shutdown(){events.removeAllListeners();server.close(()=>process.exit(0));server.closeAllConnections();}
+const stopWarehouseSync=startWarehouseSync();
+function shutdown(){stopWarehouseSync?.();events.removeAllListeners();server.close(()=>process.exit(0));server.closeAllConnections();}
 process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);

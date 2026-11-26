@@ -22,7 +22,7 @@ test('NAS graph exposes real topology, immutable pagination, annotated tags and 
   const directory=await mkdtemp(join(tmpdir(),'gitpolar-graph-test-'));
   const listener=createServer().listen(0,'127.0.0.1');await once(listener,'listening');const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
   const origin='http://127.0.0.1:'+port;let logs='';
-  const child=spawn(process.execPath,['server.mjs'],{cwd:root,windowsHide:true,env:{...process.env,HOST:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin,DATA_DIR:join(directory,'data'),WORKSPACE_NAME:'polar-lab',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:''}});child.stdout.on('data',b=>logs+=b);child.stderr.on('data',b=>logs+=b);
+  const child=spawn(process.execPath,['server.mjs'],{cwd:root,windowsHide:true,env:{...process.env,NODE_ENV:'test',AUTH_PROVIDER:'local',HOST:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin,DATA_DIR:join(directory,'data'),WORKSPACE_NAME:'polar-lab',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:''}});child.stdout.on('data',b=>logs+=b);child.stderr.on('data',b=>logs+=b);
   let cookie='';async function request(path,method='GET',body){const response=await fetch(origin+path,{method,headers:{origin,...(cookie?{cookie}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});const value=await response.json();return {status:response.status,value,cookie:response.headers.get('set-cookie')?.split(';')[0]};}
   try{
     for(let n=0;n<150;n++){try{if((await fetch(origin+'/api/health')).ok)break;}catch{}if(child.exitCode!==null)throw new Error(logs);await new Promise(r=>setTimeout(r,50));}

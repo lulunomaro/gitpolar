@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { db,getUser,userCount,repository,now } from './store.mjs';
-import { namespace,origin,callbackUrl,githubConfigured,cookieName,sessionSeconds } from './config.mjs';
+import { namespace,origin,callbackUrl,githubConfigured,cookieName,sessionSeconds,authProvider } from './config.mjs';
 import { authenticate,requireAuth,requireOrigin,body,json,fail,createUser,checkPassword,newSession,newToken,cookie,hash,setCookie } from './auth.mjs';
 import { createRepository,describe,browse,fileContent,resolveRef,commitFiles,streamGit,fileIndex,fileMeta,history,tree,branchOverview,createBranch,deleteBranch } from './git.mjs';
 import { objectPath,lockList,createLock,releaseLock } from './lfs.mjs';
@@ -12,21 +12,31 @@ import { cadProject } from './snapshot.mjs';
 import { previewInfo } from './preview.mjs';
 import { compareVersions,dependencyHistory } from './compare.mjs';
 import { commitGraph,graphCommit } from './graph.mjs';
+import { repositoryContext,resolveRepositoryContext } from './repository-context.mjs';
+import { adminApi } from './admin.mjs';
+import { procurementApi } from './procurement.mjs';
+import { warehouseApi } from './feishu-warehouse.mjs';
+import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
 
 function account(req,res,mutate=false) {
   const auth=authenticate(req);if(!auth)fail(401,'Sign in or use a gitpolar access token.');
   if(mutate&&!auth.token)requireOrigin(req);return auth.user;
 }
 export async function api(req,res,pathname,params,changed,events) {
+  if(pathname.startsWith('/api/procurement/feishu/'))return warehouseApi(req,res,pathname,params);
+  if(pathname==='/api/procurement'||pathname.startsWith('/api/procurement/'))return procurementApi(req,res,pathname,params,changed);
+  if(pathname==='/api/admin'||pathname.startsWith('/api/admin/'))return adminApi(req,res,pathname,params,changed);
   if(pathname==='/api/health')return json(res,{ok:true,service:'gitpolar',storage:'git+sqlite+lfs'});
   if(pathname==='/api/session' && req.method==='GET') {
     const auth=authenticate(req);
-    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,setupRequired:!userCount(),callbackUrl,loginUrl:githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{git:true,lfs:true,locks:true,cad:true,preview:true,hydratedArchives:true,history:true,ssh:false,issues:true,pulls:false}});
+    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,authProvider,setupRequired:!userCount(),feishuLoginUrl:feishuConfigured?new URL('/auth/feishu',origin).href:null,feishuCallbackUrl,feishuLinked:Boolean(auth?.user&&hasFeishuIdentity(auth.user.id)),callbackUrl,loginUrl:authProvider!=='feishu'&&githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{procurement:true,admin:true,repositoryContext:true,git:true,lfs:true,locks:true,cad:true,preview:true,hydratedArchives:true,history:true,ssh:false,issues:true,pulls:false}});
   }
   if(pathname==='/api/setup' && req.method==='POST') {
+    if(authProvider==='feishu')fail(403,'Only Feishu sign-in is enabled.');
     requireOrigin(req);const user=await createUser(await body(req),true);newSession(res,user);return json(res,{user},201);
   }
   if(pathname==='/api/login' && req.method==='POST') {
+    if(authProvider==='feishu')fail(403,'Only Feishu sign-in is enabled.');
     requireOrigin(req);const values=await body(req);
     const record=typeof values.username==='string'&&db.prepare('SELECT * FROM users WHERE username=?').get(values.username);
     if(!record||!await checkPassword(values.password,record.password_hash))fail(401,'Incorrect username or password.');
@@ -39,7 +49,7 @@ export async function api(req,res,pathname,params,changed,events) {
   if(pathname==='/api/users') {
     requireAuth(req,res,req.method!=='GET',true);
     if(req.method==='GET')return json(res,{users:db.prepare('SELECT id,username,display_name AS name,role,created_at,github_id FROM users ORDER BY id').all()});
-    if(req.method==='POST')return json(res,{user:await createUser(await body(req))},201);
+    if(req.method==='POST'){if(authProvider==='feishu')fail(403,'Members join through Feishu sign-in.');return json(res,{user:await createUser(await body(req))},201);}
   }
   if(pathname==='/api/tokens') {
     const user=account(req,res,req.method!=='GET');
@@ -55,6 +65,10 @@ export async function api(req,res,pathname,params,changed,events) {
     const listener=name=>res.write(`event: repository\ndata: ${JSON.stringify({name})}\n\n`);
     events.on('repository',listener);const keepAlive=setInterval(()=>res.write(': keepalive\n\n'),25000);
     res.on('close',()=>{events.off('repository',listener);clearInterval(keepAlive);});return;
+  }
+  if(pathname==='/api/repository-context/resolve' && req.method==='POST') {
+    const user=account(req,res,true),result=await resolveRepositoryContext(user,await body(req));
+    return json(res,result.body,result.status);
   }
   if(pathname==='/api/repos') {
     const user=requireAuth(req,res,req.method!=='GET');
@@ -72,8 +86,12 @@ export async function api(req,res,pathname,params,changed,events) {
   if(match) {
     const user=requireAuth(req,res,!['GET','HEAD'].includes(req.method));
     const repo=repository(match[1]);if(!repo)fail(404,'Repository not found.');
+    const expectedRepositoryId=req.headers['x-gitpolar-repository-id'];
+    if(expectedRepositoryId!==undefined&&expectedRepositoryId!==repo.id)fail(409,'Repository identity does not match the selected repository. Resolve the document context again.');
+    res.setHeader('X-Gitpolar-Repository-Id',repo.id);
     const action=match[2]||'',ref=params.get('ref')||'main',path=params.get('path')||'';
     if(!action && req.method==='GET')return json(res,await describe(repo,user.id));
+    if(action==='context' && req.method==='GET')return json(res,await repositoryContext(repo,user,{...(params.has('ref')?{ref:params.get('ref')}:{}),...(params.has('path')?{path:params.get('path')}:{})}));
     if(!action && req.method==='PATCH') {
       const value=await body(req);if(typeof value.description!=='string'||value.description.length>240)fail(400,'Invalid repository description.');
       db.prepare('UPDATE repos SET description=? WHERE id=?').run(value.description,repo.id);changed(repo.name);return json(res,{ok:true});

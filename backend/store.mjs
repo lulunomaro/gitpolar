@@ -21,6 +21,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS preferences (user_id INTEGER NOT NULL REFERENCES users(id), repo_id TEXT NOT NULL REFERENCES repos(id), kind TEXT NOT NULL CHECK(kind IN ('star','watch')), PRIMARY KEY(user_id,repo_id,kind));
   CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
 `);
+if (!db.prepare('PRAGMA table_info(sessions)').all().some(column => column.name === 'provider')) db.exec("ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'");
 export const now = () => new Date().toISOString();
 export const getUser = id => db.prepare('SELECT id,username,display_name AS name,role FROM users WHERE id=?').get(id);
 export const userCount = () => db.prepare('SELECT count(*) AS n FROM users').get().n;
