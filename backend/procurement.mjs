@@ -259,11 +259,11 @@ function threadAnnotations(values = []) {
   });
 }
 
-function attachment(value, actor, applicantId, extensions, required) {
+function attachment(value, actor, applicantId, retained, extensions, required) {
   const id = text(value, '附件 ID', 64, required);
   if (!id) return null;
   const file = db.prepare('SELECT owner_id,name FROM pc_files WHERE id=?').get(id);
-  if (!file || (file.owner_id !== actor.id && actor.role !== 'admin')) fail(404, '找不到可用于本申请的附件。');
+  if (!file || (file.owner_id !== actor.id && actor.role !== 'admin' && !retained.has(id))) fail(404, '找不到可用于本申请的附件。');
   if (!extensions.includes(extname(file.name).toLowerCase())) fail(400, '请将 STEP 模型和 DWG 图纸放入对应的附件栏。');
   const otherDraft = db.prepare(`SELECT 1 FROM pc_items i JOIN pc_requests r ON r.id=i.request_id
     WHERE (i.file_id=? OR i.drawing_file_id=?) AND r.applicant_id<>? AND r.state IN ('draft','rejected') LIMIT 1`).get(id, id, applicantId);
@@ -273,6 +273,8 @@ function attachment(value, actor, applicantId, extensions, required) {
 
 function replaceItems(requestId, values, actor, applicantId) {
   if (!Array.isArray(values) || !values.length) fail(400, '请至少提供一个采购明细。');
+  const retained = new Set(db.prepare('SELECT file_id,drawing_file_id FROM pc_items WHERE request_id=?')
+    .all(requestId).flatMap(row => [row.file_id, row.drawing_file_id]));
   const insert = db.prepare(`INSERT INTO pc_items(id,request_id,ordinal,kind,name,spec,quantity,unit,unit_price_cents,
     url,material,process,file_id,drawing_file_id,threads) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   db.prepare('DELETE FROM pc_items WHERE request_id=?').run(requestId);
@@ -292,8 +294,8 @@ function replaceItems(requestId, values, actor, applicantId) {
     const url = purchaseUrl(input.url);
     const material = text(input.material, '材料', 200);
     const process = text(input.process, '工艺', 500);
-    const model = attachment(input.fileId, actor, applicantId, ['.step', '.stp'], kind === 'machining');
-    const drawing = attachment(input.drawingFileId, actor, applicantId, ['.dwg'], false);
+    const model = attachment(input.fileId, actor, applicantId, retained, ['.step', '.stp'], kind === 'machining');
+    const drawing = attachment(input.drawingFileId, actor, applicantId, retained, ['.dwg'], false);
     const threads = threadAnnotations(input.threads);
     if (threads.length && (kind !== 'machining' || !model)) fail(400, '请在加工件的 STEP 模型上标注螺纹孔。');
     insert.run(randomUUID(), requestId, index, kind, name, spec, quantity, unit, price,
@@ -353,10 +355,13 @@ function stockRequest(user, id, location, at) {
   const receipt = db.prepare(`INSERT INTO pc_stock_receipts(id,request_id,item_id,kind,item_name,spec,unit,quantity,location,
     actor_id,actor_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
   const balance = db.prepare(`INSERT INTO pc_inventory(id,kind,name,spec,unit,location,quantity,updated_at) VALUES(?,?,?,?,?,?,?,?)
-    ON CONFLICT(kind,name,spec,unit,location) DO UPDATE SET quantity=pc_inventory.quantity+excluded.quantity,updated_at=excluded.updated_at`);
+    ON CONFLICT(kind,name,spec,unit,location) DO UPDATE SET quantity=pc_inventory.quantity+excluded.quantity,updated_at=excluded.updated_at
+      WHERE pc_inventory.quantity<=9007199254740991-excluded.quantity`);
   for (const item of lines) {
     receipt.run(randomUUID(), id, item.id, item.kind, item.name, item.spec, item.unit, item.quantity, location, user.id, user.name || user.username, at);
-    balance.run(randomUUID(), item.kind, item.name, item.spec, item.unit, location, item.quantity, at);
+    if (!balance.run(randomUUID(), item.kind, item.name, item.spec, item.unit, location, item.quantity, at).changes) {
+      fail(409, '入库后将超过该物料的库存数量上限。');
+    }
   }
 }
 

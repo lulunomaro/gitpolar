@@ -30,7 +30,8 @@ if (process.argv[2] !== '--server') {
     if (next.failCommand) { console.error('never-print-this-device-token'); process.exit(1); }
     if (next.missingIdentity) out({ok: true});
     else if (next.legacy) out({openId: next.completedId ?? 'ou_operator', userName: '本次扫码用户'});
-    else out({event: 'authorization_complete', user_open_id: next.completedId ?? 'ou_operator', user_name: '本次扫码用户'});
+    else out({event: 'authorization_complete', user_open_id: next.completedId ?? 'ou_operator', user_name: '本次扫码用户', ...next.completion});
+    process.exitCode = next.completionExit ?? 0;
   } else if (args[0] === 'api') {
     if (args[1] !== 'GET' || args[2] !== '/open-apis/authen/v1/user_info' || args[args.indexOf('--as') + 1] !== 'user') {
       throw new Error('Wrong user verification command');

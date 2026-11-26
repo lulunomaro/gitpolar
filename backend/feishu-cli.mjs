@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
+import { createHmac, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { access, chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { delimiter, extname, join, resolve } from 'node:path';
-import { cookie, fail, hash, HttpError, json, newSession, random, requireOrigin, setCookie } from './auth.mjs';
+import { basename, delimiter, dirname, extname, join, resolve } from 'node:path';
+import { cookie, fail, hash, HttpError, json, newSession, random, redeliverFeishuSession, requireOrigin, setCookie } from './auth.mjs';
 import { dataRoot } from './config.mjs';
 import { getOrCreateFeishuUser } from './feishu.mjs';
 
@@ -12,8 +13,10 @@ const directory = join(dataRoot, 'feishu-cli');
 const profile = process.env.FEISHU_CLI_PROFILE?.trim();
 const explicitConfig = process.env.FEISHU_CLI_CONFIG_DIR?.trim() || process.env.LARKSUITE_CLI_CONFIG_DIR?.trim();
 const sourceConfig = resolve(explicitConfig || join(homedir(), '.lark-cli'));
-const runtimeConfig = explicitConfig ? sourceConfig : join(dataRoot, 'lark-cli-login');
+// CLI login changes the active user in config.json. Keep the operator's source profile read-only.
+const runtimeConfig = join(dataRoot, 'lark-cli-login');
 const flows = new Map();
+const sessionKey = randomBytes(32);
 let active, cachedStatus, statusWork;
 const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const publicFailure = '飞书登录未完成，请重新扫码；如仍失败，请联系管理员检查后端登录服务。';
@@ -38,7 +41,7 @@ async function executable() {
   return null;
 }
 
-function cli(bin, args, {signal, timeout = 15_000, cwd = directory, configDir = sourceConfig} = {}) {
+function cli(bin, args, {signal, timeout = 15_000, cwd = directory, configDir = sourceConfig, completion = false} = {}) {
   return new Promise((done, reject) => {
     if (signal?.aborted) { reject(new Error(publicFailure)); return; }
     const script = ['.mjs', '.cjs', '.js'].includes(extname(bin).toLowerCase());
@@ -63,8 +66,18 @@ function cli(bin, args, {signal, timeout = 15_000, cwd = directory, configDir = 
     child.on('close', code => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', stop);
-      if (rejected || code !== 0) { reject(new Error(publicFailure)); return; }
-      done(Buffer.concat(chunks).toString('utf8'));
+      const output = Buffer.concat(chunks).toString('utf8');
+      if (!rejected && code === 0) return done(output);
+      // v1.0.100 handleLoginScopeIssue emits a *completed* grant with ExitAuth (3).
+      // It can still identify the user. Only finish() may use this exact warning, after a live user_info check.
+      if (!rejected && completion && code === 3) {
+        try {
+          const result = parse(output);
+          if (result.event === 'authorization_complete' && result.warning?.type === 'missing_scope' &&
+              Array.isArray(result.missing) && result.missing.length) return done(output);
+        } catch { /* An unsuccessful completion has no usable identity. */ }
+      }
+      reject(new Error(publicFailure));
     });
   });
 }
@@ -84,8 +97,7 @@ const appIdOf = record => typeof record.appId === 'string' && /^cli_[a-zA-Z0-9_-
 const snapshotUserId = record => typeof record.identities?.user?.openId === 'string' && record.identities.user.openId.length <= 256
   ? record.identities.user.openId : null;
 
-async function isolateConfiguration(appId) {
-  if (explicitConfig) return;
+async function isolateConfiguration(flow, appId) {
   const source = parse(await readFile(join(sourceConfig, 'config.json'), 'utf8'));
   if (!Array.isArray(source.apps)) throw new Error(publicFailure);
   const selector = profile || process.env.LARKSUITE_CLI_PROFILE || source.currentApp;
@@ -99,7 +111,8 @@ async function isolateConfiguration(appId) {
   const isolated = {currentApp: app.name || app.appId, apps: [app]};
   for (const key of ['strictMode', 'riskControl']) if (Object.hasOwn(source, key)) isolated[key] = source[key];
   await mkdir(runtimeConfig, {recursive: true, mode: 0o700});
-  const path = join(runtimeConfig, 'config.json');
+  flow.configDir = await mkdtemp(join(runtimeConfig, 'flow-'));
+  const path = join(flow.configDir, 'config.json');
   await writeFile(path, JSON.stringify(isolated), {mode: 0o600});
   await chmod(path, 0o600);
 }
@@ -128,6 +141,14 @@ export async function feishuCliStatus() {
 async function deleteQr(flow) {
   try { await unlink(flow.qrPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
+async function cleanFlowFiles(flow) {
+  try { await deleteQr(flow); } finally {
+    const dir = flow.configDir && resolve(flow.configDir);
+    if (dir && dirname(dir) === runtimeConfig && /^flow-[a-z0-9]{6}$/i.test(basename(dir))) {
+      await rm(dir, {recursive: true, force: true});
+    }
+  }
+}
 function expire(flow) {
   if (flow.status !== 'pending') return;
   flow.status = 'expired';
@@ -149,16 +170,15 @@ async function finish(flow) {
   let phase = 'authorization';
   try {
     const completed = parse(await cli(flow.bin, ['auth', 'login', '--device-code', flow.deviceCode, '--json'], {
-      configDir: runtimeConfig, signal: flow.controller.signal, timeout: Math.max(1, flow.expiresAt - Date.now())
+      configDir: flow.configDir, signal: flow.controller.signal, completion: true, timeout: Math.max(1, flow.expiresAt - Date.now())
     }));
     // v1.0.100 emits authorization_complete/user_open_id/user_name. Some CLI versions emit openId/userName.
-    const completedId = completed.event === 'authorization_complete' ? completed.user_open_id : completed.openId;
-    const completedName = completed.event === 'authorization_complete' ? completed.user_name : completed.userName;
-    if (completed.success === false || typeof completedId !== 'string' || !completedId || completedId.length > 256
-      || typeof completedName !== 'string') throw new Error(publicFailure);
+    const completedId = Object.hasOwn(completed, 'event')
+      ? (completed.event === 'authorization_complete' && completed.user_open_id) : completed.openId;
+    if (completed.ok === false || completed.success === false || typeof completedId !== 'string' || !completedId.trim() || completedId.length > 256) throw new Error(publicFailure);
     phase = 'identity';
     const result = parse(await cli(flow.bin, ['api', 'GET', '/open-apis/authen/v1/user_info', '--as', 'user'], {
-      configDir: runtimeConfig, signal: flow.controller.signal, timeout: Math.max(1, Math.min(15_000, flow.expiresAt - Date.now()))
+      configDir: flow.configDir, signal: flow.controller.signal, timeout: Math.max(1, Math.min(15_000, flow.expiresAt - Date.now()))
     }));
     const identity = result.data;
     // CLI api returns {ok:true, identity:'user', data}; raw OpenAPI replies use {code:0, data}.
@@ -183,7 +203,7 @@ async function finish(flow) {
   } finally {
     flow.deviceCode = null;
     if (active === flow) active = null;
-    await deleteQr(flow).catch(() => {});
+    await cleanFlowFiles(flow).catch(() => {});
   }
 }
 
@@ -209,10 +229,11 @@ async function start(req, res) {
       await mkdir(directory, {recursive: true, mode: 0o700});
       const record = await statusRecord(flow.bin, {signal: flow.controller.signal});
       if (!appIdOf(record)) fail(503, '请先在 NAS 上运行 lark-cli config init 配置专用应用。');
-      flow.bootstrapId = snapshotUserId(record);
-      await isolateConfiguration(appIdOf(record));
+      // Previous versions let browser scans update explicit NAS profiles. Such a cached identity is not a bootstrap grant.
+      flow.bootstrapId = explicitConfig ? null : snapshotUserId(record);
+      await isolateConfiguration(flow, appIdOf(record));
       const begun = parse(await cli(flow.bin, ['auth', 'login', '--scope', 'auth:user.id:read', '--no-wait', '--json'], {
-        configDir: runtimeConfig, signal: flow.controller.signal, timeout: 30_000
+        configDir: flow.configDir, signal: flow.controller.signal, timeout: 30_000
       }));
       if (typeof begun.verification_url !== 'string' || typeof begun.device_code !== 'string' || !begun.device_code
         || !Number.isFinite(begun.expires_in) || begun.expires_in <= 0 || begun.expires_in > 86400) throw new Error(publicFailure);
@@ -223,7 +244,7 @@ async function start(req, res) {
       flow.expiresAt = Date.now() + begun.expires_in * 1000;
       flow.timer = setTimeout(() => expire(flow), Math.max(1, flow.expiresAt - Date.now()));
       flow.timer.unref();
-      await cli(flow.bin, ['auth', 'qrcode', flow.verificationUrl, '--output', `${id}.png`], {configDir: runtimeConfig, signal: flow.controller.signal});
+      await cli(flow.bin, ['auth', 'qrcode', flow.verificationUrl, '--output', `${id}.png`], {configDir: flow.configDir, signal: flow.controller.signal});
       await chmod(flow.qrPath, 0o600);
       const bytes = await readFile(flow.qrPath);
       if (bytes.length > 2 * 1024 * 1024 || !bytes.subarray(0, 8).equals(pngHeader)) throw new Error(publicFailure);
@@ -233,7 +254,7 @@ async function start(req, res) {
       if (flow.status === 'pending') flow.status = Date.now() >= flow.expiresAt ? 'expired' : 'failed';
       flow.deviceCode = null;
       if (active === flow) active = null;
-      await deleteQr(flow);
+      await cleanFlowFiles(flow);
       if (error?.status) throw error;
       fail(503, publicFailure);
     }
@@ -260,9 +281,14 @@ export async function feishuCliApi(req, res, pathname, params) {
   }
   if (pathname === '/api/feishu-cli/poll' && req.method === 'GET') {
     const flow = authorizedFlow(req, params);
-    if (flow.status === 'pending' && flow.ready) {
-      newSession(res, flow.user, 'feishu');
-      flow.status = 'authorized';
+    if (flow.ready && ['pending','authorized'].includes(flow.status)) {
+      const session = createHmac('sha256', sessionKey).update(flow.id).update(cookie(req, flowCookie)).digest('base64url');
+      if (flow.status === 'pending') {
+        newSession(res, flow.user, 'feishu', session);
+        flow.status = 'authorized';
+      } else if (Date.now() >= flow.expiresAt || !redeliverFeishuSession(req, res, flow.user.id, session)) {
+        flow.status = 'expired';
+      }
     }
     return json(res, {status: flow.status, ...(flow.status === 'failed' ? flow.failure || {message: publicFailure} : {})});
   }
@@ -285,7 +311,7 @@ export async function shutdownFeishuCli() {
     flow.controller.abort();
   }
   await Promise.allSettled([...flows.values()].map(flow => flow.work || flow.started));
-  await Promise.allSettled([...flows.values()].map(deleteQr));
+  await Promise.allSettled([...flows.values()].map(cleanFlowFiles));
   flows.clear();
   active = null;
 }

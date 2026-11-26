@@ -34,11 +34,16 @@ export async function createUser({ username, password, role = 'writer', name = '
   const result = db.prepare('INSERT INTO users(username,password_hash,display_name,role,created_at) VALUES(?,?,?,?,?)').run(username,encoded,String(name).slice(0,100),setup?'admin':role,now());
   return getUser(Number(result.lastInsertRowid));
 }
-export function newSession(res, user, provider = 'local') {
-  const secret = random();
+export function newSession(res, user, provider = 'local', secret = random()) {
   db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());
   db.prepare('INSERT INTO sessions(hash,user_id,expires,provider) VALUES(?,?,?,?)').run(hash(secret),user.id,Date.now()+sessionSeconds*1000,provider);
   res.setHeader('Set-Cookie',setCookie(cookieName,secret,sessionSeconds));
+}
+export function redeliverFeishuSession(req, res, userId, secret) {
+  const session = db.prepare("SELECT expires FROM sessions WHERE hash=? AND user_id=? AND provider='feishu' AND expires>?").get(hash(secret), userId, Date.now());
+  if (!session) return false;
+  if (cookie(req, cookieName) !== secret) res.setHeader('Set-Cookie', setCookie(cookieName, secret, Math.ceil((session.expires-Date.now())/1000)));
+  return true;
 }
 export function authenticate(req) {
   const authorization = req.headers.authorization || '';
@@ -66,7 +71,7 @@ export function authenticate(req) {
 }
 export function requireAuth(req, res, write = false, admin = false, git = false) {
   const auth = authenticate(req);
-  if (!auth) { if (git) res.setHeader('WWW-Authenticate','Basic realm="gitpolar", charset="UTF-8"'); fail(401,'Sign in or use a gitpolar access token.'); }
+  if (!auth || (git && !auth.token)) { if (git) res.setHeader('WWW-Authenticate','Basic realm="gitpolar", charset="UTF-8"'); fail(401,git?'Use a gitpolar access token for Git and LFS.':'Sign in or use a gitpolar access token.'); }
   if (write && auth.user.role === 'reader') fail(403,'This account has read-only access.');
   if (admin && auth.user.role !== 'admin') fail(403,'Administrator access is required.');
   if (write && !git && !auth.token && req.headers.origin !== origin.origin) fail(403,'The request origin does not match APP_ORIGIN.');

@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fork } from 'node:child_process';
+import { execFile, fork } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -113,7 +114,9 @@ test('real CLI success envelope binds QR and polling to the browser, isolates pe
   const reused = await start(server, {cookie: flow.cookie});
   assert.deepEqual(reused.value, flow.value);
   assert.equal(reused.cookie, undefined);
-  const runtime = JSON.parse(await readFile(join(server.data, 'lark-cli-login', 'config.json'), 'utf8'));
+  const runtimeDir = (await server.trace()).find(entry => entry.args.includes('--no-wait')).configDir;
+  assert.equal(dirname(runtimeDir), join(server.data, 'lark-cli-login'));
+  const runtime = JSON.parse(await readFile(join(runtimeDir, 'config.json'), 'utf8'));
   assert.equal(runtime.apps.length, 1);
   assert.deepEqual(runtime.apps[0].users, []);
   assert.deepEqual(runtime.apps[0].appSecret, {$include: 'keychain-reference'});
@@ -128,7 +131,9 @@ test('real CLI success envelope binds QR and polling to the browser, isolates pe
   const meta = await request(server, '/api/procurement/meta', {cookie: authorized.cookie});
   assert.equal(meta.status, 200);
   assert.equal(meta.value.projectManager, true);
-  assert.equal((await poll(server, flow)).cookie, undefined);
+  assert.equal((await poll(server, flow, flow.cookie + '; ' + authorized.cookie)).cookie, undefined);
+  // Lost first Set-Cookie response: retry delivers the same existing session, not a new login.
+  assert.equal((await poll(server, flow)).cookie, authorized.cookie);
   assert.equal((await poll(server, flow)).value.status, 'authorized');
   inspect(server, db => {
     assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 1);
@@ -137,7 +142,7 @@ test('real CLI success envelope binds QR and polling to the browser, isolates pe
   });
   const trace = await server.trace();
   assert.ok(trace.every(entry => entry.args.slice(-2).join('|') === '--profile|' + profile));
-  assert.ok(trace.filter(entry => entry.args[1] !== 'status').every(entry => entry.configDir === join(server.data, 'lark-cli-login')));
+  assert.ok(trace.filter(entry => entry.args[1] !== 'status').every(entry => entry.configDir === runtimeDir));
   const qrCall = trace.find(entry => entry.args[1] === 'qrcode');
   assert.equal(qrCall.args[2], flow.value.verificationUrl);
   const verify = trace.find(entry => entry.args[0] === 'api');
@@ -157,6 +162,10 @@ test('real CLI success envelope binds QR and polling to the browser, isolates pe
   const memberMeta = await request(server, '/api/procurement/meta', {cookie: memberAuth.cookie});
   assert.equal(memberMeta.value.projectManager, false);
   assert.deepEqual(memberMeta.value.myRoles, [{teamId: 'mechanical', role: 'member'}]);
+  inspect(server, db => db.prepare('DELETE FROM sessions WHERE user_id=?').run(memberSession.value.user.id));
+  const revoked = await poll(server, memberFlow);
+  assert.equal(revoked.value.status, 'expired');
+  assert.equal(revoked.cookie, undefined);
 });
 
 test('cross-origin start/cancel and browser cookie substitution are rejected', {timeout: 15_000}, async t => {
@@ -179,7 +188,8 @@ test('cross-origin start/cancel and browser cookie substitution are rejected', {
   assert.equal(restarted.status, 200);
   await cli(server, '/cancel?id=' + restarted.value.id, {method: 'POST', cookie: restarted.cookie});
   const trace = await server.trace();
-  assert.ok(trace.every(entry => entry.configDir === server.dedicated));
+  assert.ok(trace.every(entry => entry.args[1] === 'status' ? entry.configDir === server.dedicated : dirname(entry.configDir) === join(server.data, 'lark-cli-login')));
+  assert.equal(await readFile(join(server.dedicated, 'config.json'), 'utf8'), server.original);
   assert.equal(await readFile(join(server.personal, 'config.json'), 'utf8'), server.original);
 });
 
@@ -194,6 +204,71 @@ test('expiration stops the owned completion command and releases the single-flow
   assert.equal(next.status, 200);
   await cli(server, '/cancel?id=' + next.value.id, {method: 'POST', cookie: next.cookie});
   inspect(server, db => assert.equal(db.prepare('SELECT COUNT(*) AS n FROM users').get().n, 0));
+});
+
+test('upstream v1.0.100 partial grant (ExitAuth=3) still requires a completed grant, live user_info and workspace admission', async t => {
+  // Contract: larksuite/cli tag v1.0.100, cmd/auth/login_result.go handleLoginScopeIssue and internal/output/exitcode.go.
+  const warning = {missing: ['offline_access'], warning: {type: 'missing_scope'}};
+  const server = await launch(t, {explicit: true, extra: {FEISHU_ALLOWED_TENANTS: 'nas-team', FEISHU_ADMIN_OPEN_IDS: 'ou_manager'}});
+  const cases = [
+    {exit: 3, fields: warning, verifiedId: 'ou_worker', status: 'authorized'},
+    {exit: 3, fields: warning, verifiedId: 'ou_other', status: 'failed', error: 'feishu_identity_failed'},
+    {exit: 3, fields: {...warning, event: 'authorization_failed'}, status: 'failed', error: 'feishu_authorization_failed'},
+    {exit: 4, fields: warning, status: 'failed', error: 'feishu_authorization_failed'},
+    {exit: 3, fields: {}, status: 'failed', error: 'feishu_authorization_failed'}
+  ];
+  for (const row of cases) {
+    await server.configure({complete: false, completedId: 'ou_worker', verifiedId: row.verifiedId || 'ou_worker', completion: row.fields, completionExit: row.exit});
+    const flow = await start(server);
+    assert.equal(flow.status, 200);
+    await server.configure({complete: true});
+    const result = await untilStatus(server, flow, row.status);
+    if (row.error) { assert.equal(result.value.errorCode, row.error); assert.equal(result.cookie, undefined); }
+    else assert.equal((await request(server, '/api/session', {cookie: result.cookie})).value.user.role, 'writer');
+  }
+  assert.equal(inspect(server, db => db.prepare('SELECT count(*) AS n FROM sessions').get().n), 1);
+  assert.equal(inspect(server, db => db.prepare("SELECT count(*) AS n FROM users WHERE role='admin'").get().n), 0);
+});
+
+test('a cached user in an explicit NAS profile cannot bootstrap a project manager', async t => {
+  const server = await launch(t, {explicit: true});
+  const flow = await start(server);
+  await server.configure({complete: true});
+  const result = await untilStatus(server, flow, 'failed');
+  assert.equal(result.value.errorCode, 'feishu_workspace_denied');
+  assert.equal(result.cookie, undefined);
+  assert.equal(inspect(server, db => db.prepare('SELECT count(*) AS n FROM users').get().n), 0);
+});
+
+test('installed official CLI reads a synthetic profile and renders an offline QR without authorization', async t => {
+  const binary = process.platform === 'win32' && process.env.APPDATA
+    ? join(process.env.APPDATA, 'npm', 'node_modules', '@larksuite', 'cli', 'bin', 'lark-cli.exe') : 'lark-cli';
+  const run = promisify(execFile);
+  const temp = await mkdtemp(join(tmpdir(), 'gitpolar-cli-contract-'));
+  const config = join(temp, 'config'), output = join(temp, 'output');
+  t.after(async () => {
+    assert.equal(dirname(resolve(temp)), resolve(tmpdir()));
+    assert.ok(basename(temp).startsWith('gitpolar-cli-contract-'));
+    await rm(temp, {recursive: true, force: true});
+  });
+  await Promise.all([mkdir(config), mkdir(output)]);
+  const env = {PATH: process.env.PATH, HOME: temp, USERPROFILE: temp, LARKSUITE_CLI_CONFIG_DIR: config,
+    LARKSUITE_CLI_DATA_DIR: join(temp, 'data'), LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1', LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1',
+    HTTP_PROXY: 'http://127.0.0.1:1', HTTPS_PROXY: 'http://127.0.0.1:1'};
+  for (const key of ['SystemRoot','WINDIR','TEMP','TMP']) if (process.env[key]) env[key] = process.env[key];
+  const invoke = args => run(binary, args, {cwd: output, env, windowsHide: true, timeout: 10_000});
+  let version;
+  try { version = (await invoke(['--version'])).stdout.trim(); }
+  catch (error) { if (error.code === 'ENOENT') return t.skip('Official CLI not installed'); throw error; }
+  t.diagnostic(version);
+  const appId = 'cli_offline_contract';
+  await writeFile(join(config, 'config.json'), JSON.stringify({currentApp: 'test', apps: [
+    {name: 'test', appId, appSecret: 'synthetic-placeholder', brand: 'feishu', users: []}]}));
+  const status = JSON.parse((await invoke(['auth','status','--json'])).stdout);
+  assert.equal(status.appId, appId);
+  assert.ok(!status.identities.user.openId);
+  await invoke(['auth','qrcode','https://example.invalid/offline','--output','offline.png']);
+  assert.equal((await readFile(join(output, 'offline.png'))).subarray(0,8).toString('hex'), '89504e470d0a1a0a');
 });
 
 test('completion output, exact verified user ID, tenant and allow policy are required; cached login is never a fallback', {timeout: 25_000}, async t => {
@@ -274,4 +349,15 @@ test('CLI identity verification rejects failed, bot and missing-success envelope
       assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 0);
     });
   }
+});
+
+
+test('an allowlisted first ordinary member is a writer rather than an implicit project manager', {timeout: 10000}, async t => {
+  const server = await launch(t, {explicit: true, extra: {FEISHU_ALLOWED_TENANTS: 'nas-team'}, settings: {completedId: 'ou_member'}});
+  const flow = await start(server);
+  await server.configure({complete: true});
+  const authorized = await untilStatus(server, flow, 'authorized');
+  const session = await request(server, '/api/session', {cookie: authorized.cookie});
+  assert.equal(session.value.user.role, 'writer');
+  assert.equal((await request(server, '/api/procurement/meta', {cookie: authorized.cookie})).value.projectManager, false);
 });

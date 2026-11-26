@@ -366,6 +366,40 @@ test('procurement from cart to warehouse with real HTTP, sessions, SQLite and st
     assert.equal(auditDb.prepare('SELECT COUNT(*) AS n FROM pc_files').get().n, filenames.length);
   });
 
+  await t.test('applicant retains manager-added attachments only within the same editable request', async () => {
+    const supplied = await upload(pm, 'manager-supplied.step', modelBytes);
+    const suppliedDrawing = await upload(pm, 'manager-supplied.dwg', drawingBytes);
+    const draft = (await create(member, [standard], {title: '管理员代传附件'})).request;
+    const line = {kind: 'machining', name: '代传加工件', spec: 'TEST', quantity: 2, unit: '件',
+      fileId: supplied.id, drawingFileId: suppliedDrawing.id, threads: []};
+    await patch(draft.id, pm, {items: [line]});
+    const edited = (await patch(draft.id, member, {items: [{...line, quantity: 3}]})).request;
+    assert.equal(edited.items[0].fileId, supplied.id);
+    assert.equal(edited.items[0].drawingFileId, suppliedDrawing.id);
+    assert.equal(edited.items[0].quantity, 3);
+    assert.deepEqual(expect(await http(server, supplied.url, {who: member})), modelBytes);
+    await create(member, [line], {title: '不得跨申请借用管理员附件'}, 404);
+    const unrelated = await upload(pm, 'unrelated-private.step', modelBytes);
+    await patch(draft.id, member, {items: [{...line, fileId: unrelated.id}]}, 404);
+    assert.deepEqual((await get('/requests/' + draft.id, member)).request.items, edited.items);
+  });
+
+  await t.test('inventory overflow rolls back request state, audit event and every stock receipt', async () => {
+    const line = {...standard, name: '库存精度上限测试', spec: 'MAX-SAFE', quantity: 1};
+    const draft = (await create(member, [line], {title: '库存累加上限'})).request;
+    await act(draft.id, member, 'submit');
+    await act(draft.id, pm, 'approve');
+    await act(draft.id, buyer, 'order', {orderReference: 'OVERFLOW-TEST'});
+    const received = (await act(draft.id, member, 'receive')).request;
+    auditDb.prepare('INSERT INTO pc_inventory(id,kind,name,spec,unit,location,quantity,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run('overflow-fixture', line.kind, line.name, line.spec, line.unit, 'LIMIT-TEST', Number.MAX_SAFE_INTEGER, new Date().toISOString());
+    await act(draft.id, keeper, 'stock', {location: 'LIMIT-TEST'}, 409);
+    assert.deepEqual((await get('/requests/' + draft.id, member)).request, received);
+    assert.equal(auditDb.prepare('SELECT COUNT(*) AS n FROM pc_stock_receipts WHERE request_id=?').get(draft.id).n, 0);
+    assert.equal(auditDb.prepare('SELECT quantity FROM pc_inventory WHERE id=?').get('overflow-fixture').quantity, Number.MAX_SAFE_INTEGER);
+    auditDb.prepare('DELETE FROM pc_inventory WHERE id=?').run('overflow-fixture');
+  });
+
   await t.test('sessions, roles, attachments, history and stock survive closing both servers', async () => {
     const inventory = await get('/inventory', member);
     const roles = (await get('/meta', keeper)).myRoles;

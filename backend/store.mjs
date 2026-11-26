@@ -4,9 +4,9 @@ import { dataRoot, dbPath } from './config.mjs';
 mkdirSync(dataRoot, { recursive: true });
 export const db = new DatabaseSync(dbPath);
 db.exec(`
+  PRAGMA busy_timeout=5000;
   PRAGMA journal_mode=WAL;
   PRAGMA foreign_keys=ON;
-  PRAGMA busy_timeout=5000;
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT, github_id INTEGER UNIQUE, display_name TEXT NOT NULL DEFAULT '',
@@ -21,7 +21,17 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS preferences (user_id INTEGER NOT NULL REFERENCES users(id), repo_id TEXT NOT NULL REFERENCES repos(id), kind TEXT NOT NULL CHECK(kind IN ('star','watch')), PRIMARY KEY(user_id,repo_id,kind));
   CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
 `);
-if (!db.prepare('PRAGMA table_info(sessions)').all().some(column => column.name === 'provider')) db.exec("ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'local'");
+// Recheck under the write lock when two workers upgrade an existing database together.
+export function ensureColumn(table, column, definition) {
+  const exists = () => db.prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === column);
+  if (exists()) return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (!exists()) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    db.exec('COMMIT');
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
+}
+ensureColumn('sessions', 'provider', "TEXT NOT NULL DEFAULT 'local'");
 export const now = () => new Date().toISOString();
 export const getUser = id => db.prepare('SELECT id,username,display_name AS name,role FROM users WHERE id=?').get(id);
 export const userCount = () => db.prepare('SELECT count(*) AS n FROM users').get().n;

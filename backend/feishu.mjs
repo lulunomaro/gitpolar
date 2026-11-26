@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { db, getUser, userCount, now } from './store.mjs';
+import { db, getUser, now } from './store.mjs';
 import { origin } from './config.mjs';
 import { authenticate, random, cookie, setCookie, newSession, fail } from './auth.mjs';
 
@@ -34,25 +34,24 @@ export function getOrCreateFeishuUser(profile,{bootstrapAdminIds=[]}={}) {
   if(typeof profile?.open_id!=='string'||!profile.open_id||typeof profile.tenant_key!=='string'||!profile.tenant_key) fail(400,'Invalid verified Feishu identity.');
   const tenants=allowedValues('FEISHU_ALLOWED_TENANTS'),members=allowedValues('FEISHU_ALLOWED_OPEN_IDS'),admins=allowedValues('FEISHU_ADMIN_OPEN_IDS');
   const designated=admins.includes(profile.open_id),explicitPolicy=tenants.length>0||members.length>0||admins.length>0;
-  const adminExists=Boolean(db.prepare("SELECT 1 FROM users u JOIN feishu_identities f ON f.user_id=u.id WHERE u.role='admin' LIMIT 1").get());
-  // A dedicated NAS CLI's already configured operator can bootstrap the first Feishu manager.
-  // It must match the identity verified by this specific device flow, not a shared cached login afterwards.
-  const bootstrap=!explicitPolicy&&!adminExists&&bootstrapAdminIds.includes(profile.open_id);
-  const trustedTenant=!explicitPolicy&&Boolean(db.prepare('SELECT 1 FROM feishu_trusted_tenants WHERE tenant_key=?').get(profile.tenant_key));
-  let identity=db.prepare('SELECT user_id FROM feishu_identities WHERE open_id=? AND tenant_key=?').get(profile.open_id,profile.tenant_key);
-  if(!identity&&!designated&&!bootstrap&&!trustedTenant&&!tenants.includes(profile.tenant_key)&&!members.includes(profile.open_id))fail(403,'This Feishu identity is not allowed to join the workspace.');
   db.exec('BEGIN IMMEDIATE');
   try {
+    const adminExists=Boolean(db.prepare("SELECT 1 FROM users u JOIN feishu_identities f ON f.user_id=u.id WHERE u.role='admin' LIMIT 1").get());
+    const bootstrap=!explicitPolicy&&!adminExists&&bootstrapAdminIds.includes(profile.open_id);
+    const trustedTenant=!explicitPolicy&&Boolean(db.prepare('SELECT 1 FROM feishu_trusted_tenants WHERE tenant_key=?').get(profile.tenant_key));
+    let identity=db.prepare('SELECT user_id FROM feishu_identities WHERE open_id=? AND tenant_key=?').get(profile.open_id,profile.tenant_key);
+    if(!identity&&!designated&&!bootstrap&&!trustedTenant&&!tenants.includes(profile.tenant_key)&&!members.includes(profile.open_id))fail(403,'This Feishu identity is not allowed to join the workspace.');
     if(!identity) {
       const username='fs-'+createHash('sha256').update(profile.open_id).digest('hex').slice(0,20);
-      const result=db.prepare('INSERT INTO users(username,display_name,role,created_at) VALUES(?,?,?,?)').run(username,String(profile.name||'Feishu user').slice(0,100),designated||bootstrap||!userCount()?'admin':'writer',now());
+      const result=db.prepare('INSERT INTO users(username,display_name,role,created_at) VALUES(?,?,?,?)').run(username,String(profile.name||'Feishu user').slice(0,100),designated||bootstrap?'admin':'writer',now());
       identity={user_id:Number(result.lastInsertRowid)};
       db.prepare('INSERT INTO feishu_identities(open_id,tenant_key,user_id,created_at) VALUES(?,?,?,?)').run(profile.open_id,profile.tenant_key,identity.user_id,now());
     } else if(designated||bootstrap) db.prepare("UPDATE users SET role='admin' WHERE id=?").run(identity.user_id);
     if(bootstrap)db.prepare('INSERT OR IGNORE INTO feishu_trusted_tenants(tenant_key,created_by,created_at) VALUES(?,?,?)').run(profile.tenant_key,identity.user_id,now());
+    const user = getUser(identity.user_id);
     db.exec('COMMIT');
+    return user;
   } catch(error) {db.exec('ROLLBACK');throw error;}
-  return getUser(identity.user_id);
 }
 
 export async function finishFeishu(req,res,params) {

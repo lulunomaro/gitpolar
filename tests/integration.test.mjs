@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
 import { randomBytes,createHash } from 'node:crypto';
 import { once } from 'node:events';
+import { request as httpRequest } from 'node:http';
+import { readdir } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { inflateRawSync,crc32 } from 'node:zlib';
 import { rename } from 'node:fs/promises';
 const exec=promisify(execFile);
@@ -503,4 +506,89 @@ test('NAS administration enforces roles and manages real users, repositories, st
     assert.equal((await request(server,'/api/admin/users',{cookie:after.cookie})).value.users.find(user=>user.id===memberId).name,'工程师');
     t.diagnostic('Real Git/LFS bytes, failed repository records, role changes, revocation and final administrator protection survived restart.');
   } finally { await server.stop(); }
+});
+
+
+test('Git/LFS require access tokens and recover an incomplete object after an incorrect size declaration', {timeout: 30000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gitpolar-lfs-retry-'));
+  const server = await launch(directory);
+  try {
+    const setup = await request(server, '/api/setup', {method: 'POST', body: {username: 'manager', password: 'test-only-password'}});
+    const cookie = setup.cookie;
+    const issued = await request(server, '/api/tokens', {method: 'POST', cookie, body: {name: 'LFS retry regression'}});
+    const token = issued.value.token;
+    const created = await request(server, '/api/repos', {method: 'POST', cookie, body: {name: 'retry-case', initialize: true}});
+    assert.equal(created.status, 201);
+    const base = '/polar-lab/retry-case.git', batch = base + '/info/lfs/objects/batch';
+    for (const options of [{}, {cookie}]) {
+      assert.equal((await request(server, base + '/info/refs?service=git-upload-pack', options)).status, 401);
+      assert.equal((await request(server, batch, {...options, method: 'POST', body: {operation: 'upload', objects: []}})).status, 401);
+    }
+    assert.equal((await request(server, base + '/info/refs?service=git-upload-pack', {token})).status, 200);
+    const bytes = Buffer.from('Gitpolar LFS correction regression');
+    const oid = createHash('sha256').update(bytes).digest('hex');
+    const describe = (size, operation = 'upload') => request(server, batch, {method: 'POST', token, body: {operation, objects: [{oid, size}]}});
+    assert.ok((await describe(bytes.length + 3)).value.objects[0].actions.upload);
+    const corrected = await describe(bytes.length);
+    assert.ok(corrected.value.objects[0].actions?.upload, JSON.stringify(corrected.value));
+
+    // Hold the transfer after its metadata has been read, then race another incorrect declaration.
+    let finishUpload;
+    const uploadDone = new Promise((done, reject) => {
+      const upload = httpRequest(server.origin + base + '/info/lfs/objects/' + oid, {method: 'PUT', headers: {Authorization: 'Bearer ' + token}}, res => {
+        res.resume(); res.on('end', () => done(res.statusCode));
+      });
+      upload.on('error', reject); upload.flushHeaders(); finishUpload = () => upload.end(bytes);
+    });
+    const objectDirectory = join(directory, 'storage', 'lfs', created.value.id, oid.slice(0, 2), oid.slice(2, 4));
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      if ((await readdir(objectDirectory).catch(() => [])).some(name => name.endsWith('.upload'))) break;
+      if (Date.now() > deadline) assert.fail('LFS transfer never opened its temporary object');
+      await wait(10);
+    }
+    await describe(bytes.length + 7);
+    finishUpload();
+    assert.equal(await uploadDone, 200);
+    const available = await describe(bytes.length, 'download');
+    assert.ok(available.value.objects[0].actions?.download, JSON.stringify(available.value));
+    const downloaded = await fetch(server.origin + base + '/info/lfs/objects/' + oid, {headers: {Authorization: 'Bearer ' + token}});
+    assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes);
+    assert.equal((await describe(bytes.length + 1)).value.objects[0].error.code, 422);
+    const tokens = await request(server, '/api/tokens', {cookie});
+    const tokenRecord = tokens.value.tokens.find(row => row.name === 'LFS retry regression');
+    assert.ok(tokenRecord);
+    assert.equal((await request(server, '/api/tokens/' + tokenRecord.id, {method: 'DELETE', cookie})).status, 204);
+    assert.equal((await request(server, base + '/info/refs?service=git-upload-pack', {token})).status, 401);
+  } finally { await server.stop(); }
+});
+
+test('two workers safely migrate legacy sessions and cannot demote the final administrator', {timeout: 30000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gitpolar-admin-race-'));
+  await mkdir(join(directory, 'storage'));
+  const legacy = new DatabaseSync(join(directory, 'storage', 'gitpolar.sqlite'));
+  legacy.exec('CREATE TABLE sessions(hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires INTEGER NOT NULL)');
+  legacy.close();
+  const workers = [];
+  try {
+    await Promise.all([launch(directory), launch(directory)].map(async pending => { const server = await pending; workers.push(server); }));
+    const [a, b] = workers;
+    const db = new DatabaseSync(join(directory, 'storage', 'gitpolar.sqlite'));
+    try { assert.equal(db.prepare('PRAGMA table_info(sessions)').all().filter(row => row.name === 'provider').length, 1); } finally { db.close(); }
+    const first = await request(a, '/api/setup', {method: 'POST', body: {username: 'firstadmin', password: 'test-only-password'}});
+    const second = await request(a, '/api/admin/users', {method: 'POST', cookie: first.cookie, body: {username: 'secondadmin', password: 'test-only-password', role: 'admin'}});
+    assert.equal(second.status, 201);
+    const login = await request(b, '/api/login', {method: 'POST', body: {username: 'secondadmin', password: 'test-only-password'}});
+    const users = [{server: a, id: first.value.user.id, cookie: first.cookie}, {server: b, id: second.value.user.id, cookie: login.cookie}];
+    for (let round = 0; round < 4; round++) {
+      const results = await Promise.all(users.map(user => request(user.server, '/api/admin/users/' + user.id,
+        {method: 'PATCH', cookie: user.cookie, body: {role: 'writer'}})));
+      assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
+      const survivor = users[results.findIndex(result => result.status === 409)];
+      const members = await request(survivor.server, '/api/admin/users', {cookie: survivor.cookie});
+      assert.equal(members.value.users.filter(user => user.role === 'admin').length, 1);
+      for (const user of users) assert.equal((await request(survivor.server, '/api/admin/users/' + user.id,
+        {method: 'PATCH', cookie: survivor.cookie, body: {role: 'admin'}})).status, 200);
+    }
+  } finally { await Promise.all(workers.map(server => server.stop())); }
 });

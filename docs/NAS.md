@@ -42,7 +42,7 @@ docker compose logs --tail=100 gitpolar
 
 也可把目录作为 Synology Container Manager / 其他 NAS 容器工具的 Compose 项目导入。镜像基于官方 `node:24-bookworm-slim`，安装 Git 和 Git LFS；构建时需要下载基础镜像、Debian 软件包和 package-lock.json 固定的 npm 依赖。
 
-先按 [扫码登录说明](LOGIN.md) 配置 NAS 的专用飞书 CLI 应用；已有配置无需重复初始化。浏览器打开 `APP_ORIGIN/login/`，点击生成二维码并用飞书确认。也可显式配置允许租户/用户与 `FEISHU_ADMIN_OPEN_IDS`；项管从 `/admin/` 管理成员角色和 NAS 状态，从 `/procurement/#permissions` 分配采购职责。成员自行生成 Git 访问令牌。请先使用一个小型仓库完成 clone / push，再迁入正式项目。
+先按 [扫码登录说明](LOGIN.md) 配置 NAS 的专用飞书 CLI 应用；已有配置无需重复初始化。浏览器打开 `APP_ORIGIN/login/`，点击生成二维码并用飞书确认。NAS 的显式 CLI 配置必须在 `.env` 的 `FEISHU_ADMIN_OPEN_IDS` 中指定首任项管（使用该应用下的飞书 open_id）；允许租户或成员名单只授予普通成员加入资格。项管从 `/admin/` 管理成员角色和 NAS 状态，从 `/procurement/#permissions` 分配采购职责。成员自行生成 Git 访问令牌。请先使用一个小型仓库完成 clone / push，再迁入正式项目。
 
 ## 3. NAS 反向代理
 

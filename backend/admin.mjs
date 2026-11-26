@@ -164,14 +164,17 @@ export async function adminApi(req,res,pathname,params,changed) {
     userRecord(id);
     if (!userMatch[2] && req.method === 'PATCH') {
       const value = await values(req,['name','role']);
-      requireAuth(req,res,true,true);
-      const current = userRecord(id);
       if (!Object.keys(value).length) fail(400, 'Provide a display name or role.');
       if (value.name !== undefined && (typeof value.name !== 'string' || value.name.length > 100)) fail(400, 'Display name must not exceed 100 characters.');
       if (value.role !== undefined && !['admin','writer','reader'].includes(value.role)) fail(400, 'Invalid role.');
-      // No await between this check and the update: concurrent requests cannot demote the final admin.
-      if (current.role === 'admin' && value.role && value.role !== 'admin' && (authProvider !== 'feishu' || hasFeishuIdentity(id)) && count("SELECT count(*) AS n FROM users WHERE role='admin'" + (authProvider === 'feishu' ? ' AND id IN (SELECT user_id FROM feishu_identities)' : '')) <= 1) fail(409, 'At least one administrator must remain.');
-      db.prepare('UPDATE users SET display_name=?,role=? WHERE id=?').run(value.name ?? current.name,value.role ?? current.role,id);
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        requireAuth(req,res,true,true);
+        const current = userRecord(id);
+        if (current.role === 'admin' && value.role && value.role !== 'admin' && (authProvider !== 'feishu' || hasFeishuIdentity(id)) && count("SELECT count(*) AS n FROM users WHERE role='admin'" + (authProvider === 'feishu' ? ' AND id IN (SELECT user_id FROM feishu_identities)' : '')) <= 1) fail(409, 'At least one administrator must remain.');
+        db.prepare('UPDATE users SET display_name=?,role=? WHERE id=?').run(value.name ?? current.name,value.role ?? current.role,id);
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
       return json(res,{user:getUser(id)});
     }
     if (userMatch[2] === 'password' && req.method === 'POST') {

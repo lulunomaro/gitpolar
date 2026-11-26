@@ -44,11 +44,18 @@ export async function lfs(req,res,repo,suffix,searchParams,changed=()=>{}) {
       const {oid,size}=object;
       if(size>maxLfsBytes){objects.push({oid,size,error:{code:413,message:`LFS object exceeds LFS_MAX_BYTES (${maxLfsBytes}).`}});continue;}
       let record=db.prepare('SELECT * FROM lfs_objects WHERE repo_id=? AND oid=?').get(repo.id,oid);
+      if(upload && !record) {
+        db.prepare('INSERT OR IGNORE INTO lfs_objects(repo_id,oid,size) VALUES(?,?,?)').run(repo.id,oid,size);
+        record=db.prepare('SELECT * FROM lfs_objects WHERE repo_id=? AND oid=?').get(repo.id,oid);
+      }
+      if(upload && record && !record.complete && record.size!==size) {
+        db.prepare('UPDATE lfs_objects SET size=? WHERE repo_id=? AND oid=? AND complete=0').run(size,repo.id,oid);
+        record=db.prepare('SELECT * FROM lfs_objects WHERE repo_id=? AND oid=?').get(repo.id,oid);
+      }
       if(record && record.size!==size){objects.push({oid,size,error:{code:422,message:'LFS object size does not match its recorded hash.'}});continue;}
       const exists=record?.complete && (await stat(objectPath(repo,oid)).catch(()=>null))?.size===size;
       const href=new URL(`/${namespace}/${repo.name}.git/info/lfs/objects/${oid}`,origin).href;
       if(upload) {
-        if(!record)db.prepare('INSERT INTO lfs_objects(repo_id,oid,size) VALUES(?,?,?)').run(repo.id,oid,size);
         objects.push({oid,size,authenticated:true,...(!exists?{actions:{upload:{href,header:{...(req.headers.authorization?{Authorization:req.headers.authorization}:{})}},verify:{href:href+'/verify',header:{...(req.headers.authorization?{Authorization:req.headers.authorization}:{})}}}}:{})});
       } else if(exists) objects.push({oid,size,authenticated:true,actions:{download:{href,header:{...(req.headers.authorization?{Authorization:req.headers.authorization}:{})}}}});
       else objects.push({oid,size,error:{code:404,message:'LFS object is not available on this server.'}});
@@ -76,7 +83,8 @@ export async function lfs(req,res,repo,suffix,searchParams,changed=()=>{}) {
         await pipeline(req,counter,createWriteStream(temp,{flags:'wx',mode:0o600}));
         if(size!==record.size || hash.digest('hex')!==oid)fail(422,'LFS SHA-256 or byte length verification failed.');
         await rename(temp,target);
-        db.prepare('UPDATE lfs_objects SET complete=1 WHERE repo_id=? AND oid=?').run(repo.id,oid);
+        // A competing batch may have changed pending metadata while this verified upload streamed.
+        db.prepare('UPDATE lfs_objects SET size=?,complete=1 WHERE repo_id=? AND oid=?').run(size,repo.id,oid);
         res.writeHead(200).end();return;
       }finally{await unlink(temp).catch(()=>{});}
     }

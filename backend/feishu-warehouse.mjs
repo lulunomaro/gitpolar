@@ -1,4 +1,4 @@
-import { db } from './store.mjs';
+import { db, ensureColumn } from './store.mjs';
 import { authenticate, requireOrigin, json, fail } from './auth.mjs';
 import { canManageWarehouse } from './procurement.mjs';
 import { feishuConfigured, feishuRequest } from './feishu.mjs';
@@ -8,6 +8,7 @@ const ledgerTable = process.env.FEISHU_WAREHOUSE_TABLE_ID?.trim() || '';
 const inventoryTable = process.env.FEISHU_INVENTORY_TABLE_ID?.trim() || '';
 const ledgerDefaults = {receiptId:'gitpolar入库ID',name:'物料名称',spec:'规格型号',quantity:'数量',unit:'单位',location:'库位',requestId:'采购单',createdAt:'入库时间',actor:'入库人'};
 const inventoryDefaults = {name:'物料名称',spec:'规格型号',unit:'单位',quantity:'库存数量',location:'库位'};
+ensureColumn('pc_stock_receipts', 'feishu_attempts', 'INTEGER NOT NULL DEFAULT 0');
 function mapping(name,defaults) {
   let custom;
   try { custom=JSON.parse(process.env[name] || '{}'); } catch { fail(503,'Invalid '+name+' JSON field mapping.'); }
@@ -36,7 +37,7 @@ async function syncReceipts() {
   if (!configured(ledgerTable)) fail(503,'Configure FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_WAREHOUSE_BASE_TOKEN and FEISHU_WAREHOUSE_TABLE_ID on the NAS first.');
   const fields=mapping('FEISHU_WAREHOUSE_FIELDS',ledgerDefaults);
   let synced=0,failed=0;
-  const receipts=db.prepare("SELECT * FROM pc_stock_receipts WHERE feishu_status IN ('pending','failed') ORDER BY created_at,id LIMIT 20").all();
+  const receipts=db.prepare("SELECT * FROM pc_stock_receipts WHERE feishu_status IN ('pending','failed') ORDER BY feishu_attempts,created_at,id LIMIT 20").all();
   for(const receipt of receipts) {
     try {
       // A permanent receipt ID is searched before writing, and reused as Feishu's UUID client_token.
@@ -54,12 +55,10 @@ async function syncReceipts() {
         recordId=response?.record?.record_id;
       }
       if(typeof recordId !== 'string' || !recordId) throw new Error('Feishu did not return a warehouse record ID.');
-      db.prepare("UPDATE pc_stock_receipts SET feishu_status='synced',feishu_record_id=?,feishu_error=NULL,feishu_synced_at=? WHERE id=?").run(recordId,new Date().toISOString(),receipt.id);
-      synced++;
+      synced += db.prepare("UPDATE pc_stock_receipts SET feishu_status='synced',feishu_record_id=?,feishu_error=NULL,feishu_synced_at=? WHERE id=? AND feishu_status<>'synced'").run(recordId,new Date().toISOString(),receipt.id).changes;
     } catch(error) {
       const message=error.status?error.message:'Feishu warehouse is temporarily unavailable. Retry after checking the network.';
-      db.prepare("UPDATE pc_stock_receipts SET feishu_status='failed',feishu_error=? WHERE id=?").run(message.slice(0,500),receipt.id);
-      failed++;
+      failed += db.prepare("UPDATE pc_stock_receipts SET feishu_status='failed',feishu_error=?,feishu_attempts=feishu_attempts+1 WHERE id=? AND feishu_status<>'synced'").run(message.slice(0,500),receipt.id).changes;
     }
   }
   return {synced,failed,pending:receiptCounts().pending};

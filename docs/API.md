@@ -94,3 +94,14 @@ GET /api/repos/:name/history?ref=REF&path=SOURCE&scope=dependencies&cursor=0
 
 
 扫码主入口为 `/login/`，设备授权接口位于 `/api/feishu-cli/`；状态、二维码、轮询和取消约定见 [LOGIN.md](LOGIN.md)。浏览器的流程 Cookie 与登录会话均为 HttpOnly。
+
+
+## 运行版本与本轮认证约束
+
+GET /api/runtime 为只读诊断接口，返回 service、version、build、startedAt、updateAvailable；不返回环境变量、路径或账户信息。源码更新后 updateAvailable 为 true，需重启后端或重建容器。
+
+Git Smart HTTP 与 Git LFS 协议接口只接受有效的 gitpolar 访问令牌，不接受网页登录 Cookie。浏览器仍通过普通 /api/ 仓库与预览接口使用飞书会话。
+
+未完成 LFS 对象可用新上传批次纠正错误的大小申报；完成上传仍必须通过实际字节数与 SHA-256 校验，已完成对象不允许改写大小。
+
+采购附件允许申请人在同一张可编辑申请中保留项管代传的既有附件，不允许借此引用其他申请的私有附件。库存数量累加溢出返回 409，入库状态、流水、库存及操作记录在同一事务回滚。

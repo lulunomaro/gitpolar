@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {mkdtemp,writeFile} from 'node:fs/promises';
+import {access,mkdtemp,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -13,7 +13,7 @@ async function launch(directory,extra={},mock=false){
   const probe=createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));
   const origin='http://127.0.0.1:'+port;
   const preload=join(directory,'mock-fetch.mjs');
-  if(mock)await writeFile(preload,`const records=new Map();let lostReply=true;
+  if(mock === true)await writeFile(preload,`const records=new Map();let lostReply=true;
     globalThis.fetch=async(url,options={})=>{
       const address=new URL(url),value=options.body?JSON.parse(options.body):{};
       const response=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
@@ -35,7 +35,7 @@ async function launch(directory,extra={},mock=false){
       }
       throw new Error('Unexpected test network request');
     };`);
-  let logs='';const child=spawn(process.execPath,[...(mock?['--import',pathToFileURL(preload).href]:[]),'server.mjs'],{cwd:root,windowsHide:true,env:{...process.env,NODE_ENV:'test',AUTH_PROVIDER:'local',HOST:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin,DATA_DIR:join(directory,'data'),GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:'',FEISHU_APP_ID:'',FEISHU_APP_SECRET:'',FEISHU_WAREHOUSE_AUTO_SYNC:'false',...extra}});
+  let logs='';const child=spawn(process.execPath,[...(mock?['--import',pathToFileURL(typeof mock === 'string' ? mock : preload).href]:[]),'server.mjs'],{cwd:root,windowsHide:true,env:{...process.env,NODE_ENV:'test',AUTH_PROVIDER:'local',HOST:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin,DATA_DIR:join(directory,'data'),GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:'',FEISHU_APP_ID:'',FEISHU_APP_SECRET:'',FEISHU_WAREHOUSE_AUTO_SYNC:'false',...extra}});
   child.stderr.on('data',chunk=>logs+=chunk);child.stdout.on('data',chunk=>logs+=chunk);
   for(let i=0;i<150;i++){if(child.exitCode!==null)throw new Error(logs);try{if((await fetch(origin+'/api/health')).ok)return{origin,stop:async()=>{if(child.exitCode!==null)return;const stopped=once(child,'exit');child.kill();await stopped;}};}catch{}await pause(30);}
   child.kill();throw new Error('Test server failed: '+logs);
@@ -130,4 +130,106 @@ test('normal deployment permits only Feishu, rejects legacy sessions and passwor
     const designated=await loginOAuth(server,'designated');assert.equal((await request(server,'/api/session',{cookie:designated.cookie})).value.user.role,'admin');
     assert.equal((await request(server,'/api/procurement/meta',{cookie:signIn.cookie})).value.projectManager,true);
   }finally{await server.stop();}
+});
+
+
+async function warehouseAuditMock() {
+  const {readFile, writeFile, access} = await import('node:fs/promises');
+  const pause = ms => new Promise(done => setTimeout(done, ms));
+  const response = data => new Response(JSON.stringify(data), {headers: {'Content-Type': 'application/json'}});
+  globalThis.fetch = async (url, options = {}) => {
+    const address = new URL(url), body = options.body ? JSON.parse(options.body) : {};
+    if (address.href === 'https://accounts.feishu.cn/oauth/v3/token') return response({access_token: 'audit-bot-token', expires_in: 7200});
+    if (address.pathname.endsWith('/records/search')) {
+      const id = body.filter.conditions[0].value[0];
+      if (process.env.WAREHOUSE_AUDIT_MODE === 'queue') {
+        const control = JSON.parse(await readFile(process.env.WAREHOUSE_AUDIT_CONTROL, 'utf8'));
+        if (control.failedIds.includes(id)) throw new Error('Fixture receipt is temporarily unavailable');
+        return response({code: 0, data: {items: []}});
+      }
+      if (process.env.WAREHOUSE_AUDIT_MODE === 'late-failure') {
+        await writeFile(process.env.WAREHOUSE_AUDIT_READY, id);
+        const deadline = Date.now() + 8000;
+        for (;;) {
+          try { await access(process.env.WAREHOUSE_AUDIT_RELEASE); break; } catch {}
+          if (Date.now() > deadline) throw new Error('Fixture synchronization deadline');
+          await pause(10);
+        }
+        throw new Error('Fixture delayed network failure');
+      }
+      return response({code: 0, data: {items: [{record_id: 'race-existing-record'}]}});
+    }
+    if (address.pathname.endsWith('/records')) {
+      const id = body.fields['gitpolar入库ID'];
+      if (address.searchParams.get('client_token') !== id) throw new Error('Missing receipt idempotency key');
+      return response({code: 0, data: {record: {record_id: 'audit-' + id}}});
+    }
+    throw new Error('Unexpected isolated warehouse request');
+  };
+}
+
+async function stockAuditItems(server, cookie, items) {
+  const created = await request(server, '/api/procurement/requests', {method: 'POST', cookie,
+    body: {title: '飞书同步异常回归', teamId: 'mechanical', items}});
+  assert.equal(created.status, 201, JSON.stringify(created.value));
+  const id = created.value.request.id;
+  for (const action of ['submit', 'approve', 'order', 'receive', 'stock']) {
+    const result = await request(server, '/api/procurement/requests/' + id + '/actions', {method: 'POST', cookie,
+      body: {action, orderReference: 'AUDIT-ORDER', location: 'AUDIT-LOC', note: '隔离业务回归'}});
+    assert.equal(result.status, 200, JSON.stringify(result.value));
+  }
+  return id;
+}
+
+test('warehouse retries do not starve new receipts behind a full failed batch', {timeout: 20000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gitpolar-warehouse-queue-'));
+  const preload = join(directory, 'audit-mock.mjs'), control = join(directory, 'control.json');
+  await writeFile(preload, 'await (' + warehouseAuditMock.toString() + ')();');
+  await writeFile(control, JSON.stringify({failedIds: []}));
+  const server = await launch(directory, {...configured, WAREHOUSE_AUDIT_MODE: 'queue', WAREHOUSE_AUDIT_CONTROL: control}, preload);
+  try {
+    const setup = await request(server, '/api/setup', {method: 'POST', body: {username: 'manager', password: 'test-only-password'}});
+    const cookie = setup.cookie;
+    const item = {kind: 'standard', name: '排队测试', spec: 'M3', unit: '件', quantity: 1, unitPriceCents: 1, url: 'https://shop.example/test'};
+    const older = await stockAuditItems(server, cookie, Array.from({length: 20}, (_, i) => ({...item, name: '旧凭证-' + i})));
+    const newer = await stockAuditItems(server, cookie, [{...item, name: '新凭证'}]);
+    const inventory = await request(server, '/api/procurement/inventory', {cookie});
+    const failedIds = inventory.value.receipts.filter(row => row.requestId === older).map(row => row.id);
+    assert.equal(failedIds.length, 20);
+    await writeFile(control, JSON.stringify({failedIds}));
+    const first = await request(server, '/api/procurement/feishu/sync', {method: 'POST', cookie});
+    assert.equal(first.value.failed, 20);
+    const second = await request(server, '/api/procurement/feishu/sync', {method: 'POST', cookie});
+    assert.equal(second.value.synced, 1);
+    const final = await request(server, '/api/procurement/inventory', {cookie});
+    assert.equal(final.value.receipts.find(row => row.requestId === newer).feishuStatus, 'synced');
+    assert.ok(final.value.receipts.filter(row => row.requestId === older).every(row => row.feishuStatus === 'failed'));
+  } finally { await server.stop(); }
+});
+
+test('a late failed worker cannot downgrade another worker successful warehouse synchronization', {timeout: 20000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gitpolar-warehouse-race-'));
+  const preload = join(directory, 'audit-mock.mjs'), ready = join(directory, 'ready'), release = join(directory, 'release');
+  await writeFile(preload, 'await (' + warehouseAuditMock.toString() + ')();');
+  const late = await launch(directory, {...configured, WAREHOUSE_AUDIT_MODE: 'late-failure', WAREHOUSE_AUDIT_READY: ready, WAREHOUSE_AUDIT_RELEASE: release}, preload);
+  let winner;
+  try {
+    const setup = await request(late, '/api/setup', {method: 'POST', body: {username: 'manager', password: 'test-only-password'}});
+    const cookie = setup.cookie;
+    await stockAuditItems(late, cookie, [{kind: 'standard', name: '并发同步', spec: 'M4', unit: '件', quantity: 2, unitPriceCents: 1, url: 'https://shop.example/test'}]);
+    winner = await launch(directory, {...configured, WAREHOUSE_AUDIT_MODE: 'winner'}, preload);
+    const pending = request(late, '/api/procurement/feishu/sync', {method: 'POST', cookie});
+    const deadline = Date.now() + 5000;
+    for (;;) { try { await access(ready); break; } catch {} if (Date.now() > deadline) assert.fail('Delayed worker never entered external search'); await pause(10); }
+    const success = await request(winner, '/api/procurement/feishu/sync', {method: 'POST', cookie});
+    assert.equal(success.value.synced, 1);
+    await writeFile(release, 'release');
+    const delayed = await pending;
+    assert.equal(delayed.value.failed, 0);
+    const inventory = await request(late, '/api/procurement/inventory', {cookie});
+    assert.equal(inventory.value.receipts[0].feishuStatus, 'synced');
+    const status = await request(winner, '/api/procurement/feishu/status', {cookie});
+    assert.equal(status.value.synced, 1);
+    assert.equal(status.value.failed, 0);
+  } finally { await writeFile(release, 'release'); await winner?.stop(); await late.stop(); }
 });
