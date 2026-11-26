@@ -22,7 +22,7 @@ gitpolar 提供同源 HTTP API，沿用现有登录 Cookie、Origin 校验及个
 | DELETE /teams | id、expectedAccess，以及 expectedHeads 中 dji/dm 两个完整提交号。 |
 | GET /access?scope=组标识或main | 对应管理者可读取 grants 及 accessVersion。 |
 | PUT /access | scope、username、role、expectedAccess。role 可为 manager、writer 或 null（撤销）。车组需保留一位管理者。 |
-| GET /history、/files、/file | 传 ref 和可选 oid，可选 path。车组路径相对该板卡目录，main 和原始 engineer 的路径相对仓库根。history 支持 offset，file 返回文本或 Base64。 |
+| GET /history、/files、/file | 传 ref 和可选 oid。车组文件路径相对所选板卡目录，main 和原始分支的路径相对仓库根。history 默认列出该范围内的提交，可用 path 筛选、用 offset 翻页。file 返回文本或 Base64。 |
 | POST /commits | ref、expectedHead、message、files。一次提交可含多项 {path,text}、{path,base64} 或 {path,remove:true}。 |
 | GET /compare | baseRef、headRef，可选 baseOid、headOid、仓库相对 path。返回变更文件、两端 SHA、真实三方合并的冲突路径。指定 path 后返回逐行 patch。 |
 | POST /merge | 主线 manager 传车组 ref、sourceOid 和 mainOid。冲突时返回 409 和 conflicts，成功时返回合并提交及双亲。 |
@@ -50,6 +50,8 @@ NAS 与工位之间传输仓库信息、端口数据和运行结果，团队网�
 | GET /stations/{id}/compare?ref=目标分支 | 将当前开发板主动报告的提交与所选分支或指定 oid 比较。可附仓库相对 path 查看补丁。没有版本回报、仓库不匹配或无法找到提交时返回 unknown 和原因。 |
 | POST /stations/{id}/verification | 传 flash 操作 ID、outcome（passed 或 failed）和实测 note。通过需要烧录成功且再次打开串口后读回同仓库、分支、完整提交、板型与构建 UUID。 |
 | GET /stations/{id}/verification | 实机结果、经手人、时间及当时的版号证据。 |
+
+工位按递增的批次号发送心跳。重发最近一批时，NAS 只保存一份采样，并返回该批次已领取的任务或原来的空结果。随后入队的任务由下一批新心跳领取。
 
 串口任务传 port（如 COM5）和 baud。端口打开后持续接收，无需网页直接访问 USB。上位机接收协议依据配套的 [Serial_Port_Assistant](https://gitee.com/cambridge-linker/Serial_Port_Assistant)。接收器保留所有原始字节，对 StandardRobot++ 的 0x5A 帧执行 CRC8 和 CRC16 校验，解码 Debug 字段及 IMU 数据，支持分包和粘包。
 

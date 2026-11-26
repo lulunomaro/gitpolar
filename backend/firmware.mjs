@@ -1,6 +1,6 @@
 import {db} from './store.mjs';
 import {body, fail, json, requireAuth} from './auth.mjs';
-import {families, boardRef, region, repositoryName, withRepository, catalog, head, controlUpdate,
+import {families, boardRef, region, repositoryName, withRepository, catalog, head, branchHeads, controlUpdate,
   publish, expectedOid, sourcePath, resolveVersion, run, entry, createCommit, writeTree, mergeIntoMain,
   comparison, knownCommit, sourceDirs, sourceRef, copyDirectory} from './firmware-git.mjs';
 import {stationApi} from './firmware-stations.mjs';
@@ -39,19 +39,21 @@ function validMember(username) {
 function pathIn(scope, path) {
   return (scope.path ? scope.path + '/' : '') + sourcePath(path);
 }
-async function overview(user, current) {
+async function overview(user) {
+  const heads = await branchHeads();
+  const current = await catalog(heads);
   const main = scopeFor(current.access,'main');
   const groups = [];
   for (const [id,group] of Object.entries(current.access.groups)) {
     const boards = [];
     for (const family of families) {
       const ref = boardRef(id,family);
-      boards.push({family,ref,oid:await head(ref),directory:group.directories?.[family] || region(id,family)});
+      boards.push({family,ref,oid:heads.get(ref) || null,directory:group.directories?.[family] || region(id,family)});
     }
     groups.push({id,name:group.name,role:role(user,{grants:group.grants}),boards});
   }
-  const initial = await head(sourceRef);
-  return {repository:repositoryName,accessVersion:current.oid,main:{ref:'main',oid:await head('main'),role:role(user,main)},
+  const initial = heads.get(sourceRef);
+  return {repository:repositoryName,accessVersion:current.oid,main:{ref:'main',oid:heads.get('main') || null,role:role(user,main)},
     source:initial?{ref:sourceRef,oid:initial,directories:sourceDirs}:null,groups};
 }
 async function initialize(user,current,input) {
@@ -203,8 +205,8 @@ export async function firmwareApi(req,res,path,params,changed) {
   const input = mutation ? await body(req,4*1024*1024) : Object.fromEntries(params);
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400,'Expected a JSON object.');
   const value = await withRepository(async () => {
+    if (!action && !mutation) return overview(user);
     const current = await catalog();
-    if (!action && !mutation) return overview(user,current);
     if (action === 'initialize' && req.method === 'POST') return initialize(user,current,input);
     if ((action === 'teams' && ['POST','DELETE'].includes(req.method)) || (action === 'access' && req.method === 'PUT')) {
       return adminChange(user,current,action,input,req.method);
@@ -228,7 +230,8 @@ export async function firmwareApi(req,res,path,params,changed) {
     if (action === 'history' && !mutation) {
       const skip = Number(input.offset || 0);
       if (!Number.isSafeInteger(skip) || skip<0) fail(400,'Invalid history offset.');
-      const data = await run(['log','-z','--format=%H%x00%an%x00%aI%x00%s','--max-count=51','--skip='+skip,oid,'--',...(input.path?[pathIn(scope,input.path)]:[])]);
+      const historyPath = input.path ? pathIn(scope,input.path) : scope.path;
+      const data = await run(['log','-z','--format=%H%x00%an%x00%aI%x00%s','--max-count=51','--skip='+skip,oid,'--',...(historyPath?[historyPath]:[])]);
       const parts = data.split('\0'), commits = [];
       for (let i=0;i+3<parts.length;i+=4) commits.push({oid:parts[i],author:parts[i+1],date:parts[i+2],message:parts[i+3]});
       return {oid,commits:commits.slice(0,50),nextOffset:commits.length>50?skip+50:null};

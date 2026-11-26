@@ -9,6 +9,8 @@ import {once} from 'node:events';
 import {randomUUID} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {createServer} from 'node:net';
+import {request as httpRequest} from 'node:http';
+import {json as readJson} from 'node:stream/consumers';
 import {pathToFileURL} from 'node:url';
 
 const exec=promisify(execFile);
@@ -24,6 +26,9 @@ test('firmware API uses atomic upstream Git, independent vehicle grants, pinned 
   }
   await cmd('-C',seed,'add','.');
   await cmd('-C',seed,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Baseline');
+  const bothBoards=await cmd('-C',seed,'rev-parse','HEAD');
+  await writeFile(join(seed,'dji_board','a.c'),'int sample = 8;\n');
+  await cmd('-C',seed,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-am','Update DJI only');
   await cmd('-C',seed,'push',remote,'engineer');
   const initial=await cmd('-C',seed,'rev-parse','HEAD');
   await cmd('config','--file',cfg,'url.'+pathToFileURL(remote).href+'.insteadOf',upstream);
@@ -58,6 +63,14 @@ test('firmware API uses atomic upstream Git, independent vehicle grants, pinned 
   let access=(await api('/initialize','POST',{manager:'engineer',expectedSource:initial})).accessVersion;
   await api('/teams','POST',{id:'main',name:'车组',manager:'engineer',expectedAccess:access},admin,400);
   assert.equal((await api()).groups[0].boards.length,2);
+  await t.test('board history follows its directory while main and the original branch retain full history',async()=>{
+    const history=async(name,query='')=>(await api('/history?ref='+url(name)+query)).commits.map(c=>c.oid);
+    assert.deepEqual(await history('main'),[initial,bothBoards]);
+    assert.deepEqual(await history('engineer'),[initial,bothBoards]);
+    assert.deepEqual(await history('teams/engineer/dji','&path=a.c'),[initial,bothBoards]);
+    assert.deepEqual(await history(ref),[bothBoards]);
+    assert.deepEqual(await history(ref,'&offset=1'),[]);
+  });
   const team=(await api('/teams','POST',{id:'lab',name:'采集组',manager:'engineer',expectedAccess:access,templateGroup:'engineer'}));
   access=team.accessVersion;
   assert.deepEqual((await api('/files?ref=teams%2Flab%2Fdji')).files,['a.c']);
@@ -97,8 +110,9 @@ test('firmware API uses atomic upstream Git, independent vehicle grants, pinned 
   await api(route,'GET',null,admin,404);
   const session=randomUUID(); let batch=0;
   let status={port:'COM8',identity:null};
-  const exchange=async(extra={})=>(await request('/api/firmware/station/exchange','POST',
-    {session,batch:++batch,status,samples:[],...extra},null,200,station.key)).data;
+  const exchangePath='/api/firmware/station/exchange';
+  const heartbeat=async message=>(await request(exchangePath,'POST',message,null,200,station.key)).data;
+  const exchange=(extra={})=>heartbeat({session,batch:++batch,status,samples:[],...extra});
   await exchange();
   assert.equal((await api(route+'/compare?ref='+url(ref),'GET',null,member)).state,'unknown');
   const job={id:randomUUID(),kind:'build',profile:'fixture',ref,oid:deleted};
@@ -123,7 +137,38 @@ test('firmware API uses atomic upstream Git, independent vehicle grants, pinned 
   const device=await api(route+'/compare?ref=main','GET',null,member);
   assert.equal(device.identity.oid,deleted);assert.deepEqual(device.conflicts,['DM_board/a.c']);
   await api(route+'/verification','POST',verify,member,201);
-  assert.equal((await api(route+'/samples','GET',null,member)).samples.length,1);
+  const {samples}=await api(route+'/samples','GET',null,member);
+  assert.equal(samples.length,1);
+  const idle={session,batch:++batch,status,samples:[]};
+  const idleReply=await heartbeat(idle);
+  const close={id:randomUUID(),kind:'serial-close'};
+  await api(route+'/jobs','POST',close,member,202);
+  await t.test('retrying an idle heartbeat leaves later jobs queued',async()=>{
+    assert.deepEqual(await heartbeat(idle),idleReply);
+    assert.equal((await api(route+'/jobs/'+close.id,'GET',null,member)).state,'queued');
+  });
+  await t.test('overlapping copies of a heartbeat deliver the same job and store its samples once',async()=>{
+    const message={session,batch:++batch,status,samples:[{type:'overlap'}]};
+    const wire=JSON.stringify(message);
+    // 第一份请求先送达请求头，等重试已被确认后才交付请求体。
+    const delayed=httpRequest(origin+exchangePath,{method:'POST',headers:{Authorization:'Bearer '+station.key,
+      Expect:'100-continue','Content-Type':'application/json','Content-Length':Buffer.byteLength(wire)}});
+    try {
+      const ready=once(delayed,'continue');
+      delayed.flushHeaders();
+      await ready;
+      const accepted=await heartbeat(message);
+      const response=once(delayed,'response');
+      delayed.end(wire);
+      const [reply]=await response;
+      assert.equal(reply.statusCode,200);
+      assert.equal(accepted.job.id,close.id);
+      assert.deepEqual(await readJson(reply),accepted);
+      const page=await api(route+'/samples?after='+samples[0].seq,'GET',null,member);
+      assert.deepEqual(page.samples.map(s=>s.data),message.samples);
+    } finally { delayed.destroy(); }
+  });
+  await exchange({completed:{id:close.id,state:'ok',result:{}}});
   const interrupted={...flashing,id:randomUUID()}, queued={...flashing,id:randomUUID()};
   await api(route+'/jobs','POST',interrupted,member,202);
   assert.equal((await exchange()).job.id,interrupted.id);
@@ -134,10 +179,18 @@ test('firmware API uses atomic upstream Git, independent vehicle grants, pinned 
   assert.equal(recovered.data.job,null);
   assert.equal((await api(route+'/jobs/'+interrupted.id,'GET',null,member)).state,'unknown');
   assert.equal((await api(route+'/jobs/'+queued.id,'GET',null,member)).state,'expired');
-  const lab=(await api()).groups.find(g=>g.id==='lab');
+  const overview=await api(), lab=overview.groups.find(g=>g.id==='lab');
+  assert.equal(overview.main.oid,left);
+  assert.equal(overview.source.oid,initial);
+  for(const group of overview.groups) for(const board of group.boards) {
+    assert.equal(board.oid,await cmd('--git-dir='+remote,'rev-parse','refs/heads/'+board.ref));
+  }
   const expectedHeads=Object.fromEntries(lab.boards.map(b=>[b.family,b.oid]));
   await api('/teams','DELETE',{id:'lab',expectedAccess:access,expectedHeads:{...expectedHeads,dm:initial}},admin,409);
   await api('/teams','DELETE',{id:'lab',expectedAccess:access,expectedHeads});
   assert.equal((await api()).groups.length,1);
+  await cmd('--git-dir='+remote,'update-ref','-d','refs/heads/teams/engineer/dji');
+  const remaining=(await api()).groups[0].boards;
+  assert.deepEqual(remaining.map(b=>[b.family,b.oid]),[['dji',null],['dm',deleted]]);
   assert.equal(await cmd('--git-dir='+remote,'rev-parse','engineer'),initial);
 });

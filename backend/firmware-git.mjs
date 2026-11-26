@@ -76,8 +76,12 @@ export async function head(ref) {
   const value = (await run(['rev-parse', '--verify', '--quiet', remoteRef(ref) + '^{commit}'], {allowFailure:true})).trim();
   return oidPattern.test(value) ? value : null;
 }
-export async function catalog() {
-  const oid = await head(controlRef);
+export async function branchHeads() {
+  const refs = await run(['for-each-ref','--format=%(refname:lstrip=3)%00%(objectname)',remoteRef('')]);
+  return new Map(refs.trimEnd().split('\n').filter(Boolean).map(line=>line.split('\0')));
+}
+export async function catalog(heads) {
+  const oid = heads ? heads.get(controlRef) : await head(controlRef);
   if (!oid) return {oid:null, access:{main:{}, groups:{}}};
   const access = JSON.parse(await run(['show', oid + ':access.json']));
   return {oid, access};

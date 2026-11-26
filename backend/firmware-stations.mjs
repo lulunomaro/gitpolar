@@ -40,13 +40,15 @@ function freshIdentity(row) {
   const state = JSON.parse(row.snapshot);
   return online(row) && state.port && !state.serialError ? state.identity || null : null;
 }
-function exchange(station, data) {
+function exchange(stationId, data) {
   if (!uuid.test(data.session) || !Number.isSafeInteger(data.batch) || data.batch<1 ||
       !Array.isArray(data.samples) || data.samples.length>256 || !data.status || typeof data.status!=='object') fail(400,'Invalid station heartbeat.');
-  const sameSession = station.session === data.session;
-  if (!sameSession && online(station)) fail(409,'This station already has a connected process.');
   db.exec('BEGIN IMMEDIATE');
   try {
+    // 读取请求体期间可能已有另一份心跳完成，批次判断和采样入库须使用同一事务。
+    const station = db.prepare('SELECT id,session,seen,last_batch FROM fw_stations WHERE id=?').get(stationId);
+    const sameSession = station.session === data.session;
+    if (!sameSession && online(station)) fail(409,'This station already has a connected process.');
     if (sameSession && data.batch < station.last_batch) fail(409,'Stale station heartbeat.');
     const quietRetry = sameSession && data.batch === station.last_batch;
     if (!quietRetry) {
@@ -65,14 +67,15 @@ function exchange(station, data) {
       if (station.seen && !online(station)) {
         db.prepare("UPDATE fw_jobs SET state='expired',updated=? WHERE station=? AND kind='flash' AND state='queued'").run(now(),station.id);
       }
-      for (const sample of data.samples) {
-        db.prepare('INSERT INTO fw_samples(station,sample) VALUES(?,?)').run(station.id,JSON.stringify(sample));
+      if (data.samples.length) {
+        const insert = db.prepare('INSERT INTO fw_samples(station,sample) VALUES(?,?)');
+        for (const sample of data.samples) insert.run(station.id,JSON.stringify(sample));
+        db.prepare('DELETE FROM fw_samples WHERE station=? AND seq < (SELECT seq FROM fw_samples WHERE station=? ORDER BY seq DESC LIMIT 1 OFFSET 511)').run(station.id,station.id);
       }
-      if (data.samples.length) db.prepare('DELETE FROM fw_samples WHERE station=? AND seq < (SELECT seq FROM fw_samples WHERE station=? ORDER BY seq DESC LIMIT 1 OFFSET 511)').run(station.id,station.id);
       db.prepare('UPDATE fw_stations SET session=?,seen=?,snapshot=?,last_batch=? WHERE id=?').run(data.session,Date.now(),JSON.stringify(data.status),data.batch,station.id);
     }
     let job = db.prepare("SELECT * FROM fw_jobs WHERE station=? AND state='running' ORDER BY rowid LIMIT 1").get(station.id);
-    if (!job && !data.active) {
+    if (!quietRetry && !job && !data.active) {
       job = db.prepare("SELECT * FROM fw_jobs WHERE station=? AND state='queued' ORDER BY rowid LIMIT 1").get(station.id);
       if (job) db.prepare("UPDATE fw_jobs SET state='running',updated=? WHERE id=?").run(now(),job.id);
     }
@@ -124,10 +127,10 @@ async function enqueue(station,user,input,services) {
 export async function stationApi(req,res,action,params,services) {
   if (action==='station/exchange' && req.method==='POST') {
     const key = (req.headers.authorization || '').replace(/^Bearer /,'');
-    const station = key && db.prepare('SELECT * FROM fw_stations WHERE secret=?').get(hash(key));
+    const station = key && db.prepare('SELECT id FROM fw_stations WHERE secret=?').get(hash(key));
     if (!station) fail(401,'Invalid workstation key.');
     const data = await body(req,512*1024);
-    return json(res,exchange(station,data));
+    return json(res,exchange(station.id,data));
   }
   const user = requireAuth(req,res,req.method!=='GET');
   if (action==='stations') {
