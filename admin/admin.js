@@ -208,7 +208,10 @@ async function loadSection({refresh = false, focus = false} = {}) {
   if (focus) $('#page-title').focus({preventScroll: true});
   try {
     const params = refresh && ['overview', 'repositories'].includes(section.endpoint) ? '?refresh=1' : '';
+    const running = key === 'deployment' ? api('/api/runtime', {signal: controller.signal})
+      .then(value => value, error => ({unavailable: true, legacy: error.status === 404})) : null;
     const data = await api(`/api/admin/${section.endpoint}${params}`, {signal: controller.signal});
+    if (running) data.runtime = await running;
     if (state.request !== controller) return;
     if (state.strictFeishu && section.endpoint === 'overview') {
       data.diagnostics = data.diagnostics.filter(item => !/github (?:oauth|login)|本地登录|local login/i.test(item.title));
@@ -305,7 +308,7 @@ function diagnosticText(text) {
   return failures ? failures[1] + ' 条仓库创建记录需要检查。' : diagnosticLabels.get(text) || text;
 }
 
-function renderDeployment({deployment: config, diagnostics, service}) {
+function renderDeployment({deployment: config, diagnostics, service, runtime: backendRuntime}) {
   const setting = value => `<code>${escape(value ?? '—')}</code>`;
   const settings = [
     ['服务地址 · APP_ORIGIN', setting(config.origin)], ['工作空间 · WORKSPACE_NAME', setting(config.namespace)],
@@ -321,8 +324,14 @@ function renderDeployment({deployment: config, diagnostics, service}) {
   ];
   const runtime = [['服务版本', setting(`${service.name} ${service.version}`)], ['Node.js', setting(service.nodeVersion)],
     ['系统平台', setting(service.platform)], ['运行时间', duration(service.uptimeSeconds)],
-    ['Git', setting(config.gitVersion || '未检测到')], ['Git LFS', setting(config.gitLfsVersion || '未检测到')]];
-  const checks = diagnostics.map(item => `<li class="diagnostic"><span class="check-symbol ${item.status === 'warning' ? 'warn' : ''}">${icon(item.status === 'warning' ? 'warning' : 'check-circle')}</span>
+    ['Git', setting(config.gitVersion || '未检测到')], ['Git LFS', setting(config.gitLfsVersion || '未检测到')],
+    ['运行构建', setting(backendRuntime?.build)], ['后端启动时间', backendRuntime?.startedAt ? time(backendRuntime.startedAt) : '未确认'],
+    ['代码更新', label(backendRuntime?.unavailable ? '运行版本未确认' : backendRuntime?.updateAvailable ? '需要重启后端' : '已加载当前代码', backendRuntime?.unavailable || backendRuntime?.updateAvailable ? 'amber' : 'green')]];
+  const runtimeWarning = backendRuntime?.legacy || backendRuntime?.updateAvailable;
+  const runtimeCheck = runtimeWarning
+    ? {status: 'warning', title: '后端需要重启', detail: '页面或后端源码已有更新，当前进程尚未加载。请在 NAS 重建容器；本机部署请停止旧进程后重新启动。'}
+    : backendRuntime?.unavailable ? {status: 'warning', title: '运行版本未确认', detail: '暂时无法读取后端运行版本，请刷新诊断。'} : null;
+  const checks = [...diagnostics, ...(runtimeCheck ? [runtimeCheck] : [])].map(item => `<li class="diagnostic"><span class="check-symbol ${item.status === 'warning' ? 'warn' : ''}">${icon(item.status === 'warning' ? 'warning' : 'check-circle')}</span>
     <div><strong>${escape(diagnosticText(item.title))}</strong><p>${escape(diagnosticText(item.detail))}</p></div>${label(item.status === 'warning' ? '需关注' : '通过', item.status === 'warning' ? 'amber' : 'green')}</li>`).join('');
   page.innerHTML = `<div class="deploy-grid">
     <section class="panel">${panelHeader('gear', '生效配置')}${detailRows(settings)}</section>

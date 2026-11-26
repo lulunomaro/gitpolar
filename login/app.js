@@ -190,6 +190,12 @@ function setup() {
   $('web-login').hidden = $('web-hint').hidden = !webLogin;
   if (webLogin) $('web-login').setAttribute('href', webLogin); else $('web-login').removeAttribute('href');
 }
+function runtimeWarning() {
+  finish('failed', '后端尚未加载最新登录修复，请管理员重启 gitpolar 服务后，再点击下方按钮重新检查。');
+  $('connection').textContent = '后端需要重启';
+  buttons('', false, true);
+  $('refresh').textContent = '重新检查后端';
+}
 async function boot() {
   const version = ++bootVersion;
   lifecycle?.abort();
@@ -207,9 +213,14 @@ async function boot() {
   try {
     // Catch the parallel status request immediately, including when an existing session redirects.
     const status = json(`${root}/status`, { signal: lifecycle.signal }).then(value => ({ value }), error => ({ error }));
+    const runtime = json('/api/runtime', { signal: lifecycle.signal }).then(value => ({ value }), error => ({ error }));
     metadata = await json('/api/session', { signal: lifecycle.signal });
     if (version !== bootVersion || lifecycle.signal.aborted) return;
     if (metadata.user) { steps(3); redirect(); return; }
+    const running = await runtime;
+    if (version !== bootVersion || lifecycle.signal.aborted) return;
+    if (running.error?.status === 404 || running.value?.updateAvailable) { runtimeWarning(); return; }
+    if (running.error) throw running.error;
     const result = await status;
     if (version !== bootVersion || lifecycle.signal.aborted) return;
     if (result.error) throw result.error;

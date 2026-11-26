@@ -38,6 +38,8 @@ docker compose ps
 docker compose logs --tail=100 gitpolar
 ```
 
+更新后可查询 `GET /api/runtime`：`build` 是该进程加载的后端源码指纹，`startedAt` 是启动时间，`updateAvailable: true` 表示磁盘源码与当前进程不一致，需要重启或重建容器。管理后台“部署与诊断”显示同样的信息。登录页遇到旧后端缺少该接口或检测到未加载的更新时，会明确提示重启，避免反复扫码。该接口不返回路径、环境变量、账号或密钥。
+
 也可把目录作为 Synology Container Manager / 其他 NAS 容器工具的 Compose 项目导入。镜像基于官方 `node:24-bookworm-slim`，安装 Git 和 Git LFS；构建时需要下载基础镜像、Debian 软件包和 package-lock.json 固定的 npm 依赖。
 
 先按 [扫码登录说明](LOGIN.md) 配置 NAS 的专用飞书 CLI 应用；已有配置无需重复初始化。浏览器打开 `APP_ORIGIN/login/`，点击生成二维码并用飞书确认。也可显式配置允许租户/用户与 `FEISHU_ADMIN_OPEN_IDS`；项管从 `/admin/` 管理成员角色和 NAS 状态，从 `/procurement/#permissions` 分配采购职责。成员自行生成 Git 访问令牌。请先使用一个小型仓库完成 clone / push，再迁入正式项目。

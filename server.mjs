@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { loadEnvFile } from 'node:process';
 import { EventEmitter } from 'node:events';
@@ -16,6 +17,17 @@ const {beginOAuth,finishOAuth}=await import('./backend/oauth.mjs');
 const {beginFeishu,finishFeishu}=await import('./backend/feishu.mjs');
 const {startWarehouseSync}=await import('./backend/feishu-warehouse.mjs');
 const {shutdownFeishuCli}=await import('./backend/feishu-cli.mjs');
+const runtimeStartedAt = new Date().toISOString();
+const applicationVersion = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8')).version;
+async function runtimeFingerprint() {
+  const modules = (await readdir(new URL('./backend/', import.meta.url))).filter(name => name.endsWith('.mjs')).sort();
+  const digest = createHash('sha256');
+  for (const name of ['server.mjs', 'package.json', ...modules.map(name => 'backend/' + name)]) {
+    digest.update(name).update('\0').update(await readFile(new URL(name, import.meta.url)));
+  }
+  return digest.digest('hex').slice(0, 16);
+}
+const runtimeBuild = await runtimeFingerprint();
 const events=new EventEmitter();events.setMaxListeners(1000);
 const changed=name=>events.emit('repository',name);
 const assets=new Map([
@@ -43,6 +55,10 @@ async function handle(req,res) {
   const url=new URL(req.url,origin),path=decodeURIComponent(url.pathname);
   // Emscripten's binding glue uses Function; its policy is scoped to the CAD worker.
   if(path==='/cad-worker.js')res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'unsafe-eval'; connect-src 'self'");
+  if(path==='/api/runtime'&&req.method==='GET')return json(res,{
+    service:'gitpolar',version:applicationVersion,build:runtimeBuild,startedAt:runtimeStartedAt,
+    updateAvailable:await runtimeFingerprint()!==runtimeBuild
+  });
   if(path.startsWith('/api/'))return api(req,res,path,url.searchParams,changed,events);
   if(path==='/auth/logout'&&req.method==='POST')return api(req,res,'/api/logout',url.searchParams,changed,events);
   if(path==='/auth/feishu'&&req.method==='GET')return beginFeishu(req,res,url.searchParams);
