@@ -71,6 +71,10 @@ git lfs unlock "装配/底盘.SLDASM"
 
 Git LFS 使用标准 Batch、Basic Transfer 和 Locking API。服务端验证上传的字节数和 SHA-256；接收 push 前检查 LFS 对象是否存在，并拒绝修改其他成员锁住的文件。锁对同一仓库中的路径生效，跨分支共享。
 
+## 电控工作区后端
+
+固件可托管在 Gitee 或 GitHub。主线汇总各车组 DJI、DM 固件，车组单独授权。HTTP 接口提供提交、差异与合并冲突、draw.io 读写、个人 Windows 工位串口遥测、固件身份、选版构建和烧录核验。工位复用本机 CubeMX 与 Keil。配置、权限及调用示例见 [电控工作区](docs/FIRMWARE.md)。
+
 ## 可选 GitHub 登录
 
 GitHub 只作为身份提供方，仓库与 LFS 文件保存在 NAS。

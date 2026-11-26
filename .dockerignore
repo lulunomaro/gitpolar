@@ -6,3 +6,5 @@ data
 node_modules
 assets/gitpolar-original.png
 *.zip
+**/__pycache__
+tools/firmware/station.json

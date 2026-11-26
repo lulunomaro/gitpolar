@@ -33,15 +33,20 @@ async function pointers(repo, files) {
   return result;
 }
 
-export async function snapshot(repo, ref) {
+export async function cadTree(repo, ref) {
   const oid = await resolveRef(repo,ref);
   const files = await fileIndex(repo,oid);
+  for (const file of files) file.kind = cadTypes.get(extname(file.path).toLowerCase()) || null;
+  return {ref,oid,files};
+}
+
+export async function snapshot(repo, ref) {
+  const data = await cadTree(repo,ref), files = data.files;
   const pointerMap = await pointers(repo,files);
   const record = db.prepare('SELECT size,complete FROM lfs_objects WHERE repo_id=? AND oid=?');
   for (let start=0; start<files.length; start+=32) {
     await Promise.all(files.slice(start,start+32).map(async file=>{
       const pointer = pointerMap.get(file.oid);
-      file.kind = cadTypes.get(extname(file.path).toLowerCase()) || null;
       file.lfs = Boolean(pointer);
       file.available = true;
       if (pointer) {
@@ -54,7 +59,7 @@ export async function snapshot(repo, ref) {
       }
     }));
   }
-  return {ref,oid,files};
+  return data;
 }
 
 export async function cadProject(repo,ref) {
