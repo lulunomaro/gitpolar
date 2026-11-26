@@ -40,7 +40,8 @@
       <div class="top-actions"><a href="/">返回主站</a><a id="admin-link" href="/admin/" hidden>管理后台</a><span class="identity" id="identity" hidden><span class="avatar" id="avatar"></span><span id="username"></span></span></div>
     </div>
     <nav id="tabs" class="tabs wrap" aria-label="采购工作区" hidden>
-      <a href="#requests" data-tab="requests"><svg class="ico"><use href="#list"/></svg>申请单</a>
+      <a href="#requests" data-tab="requests"><svg class="ico"><use href="#list"/></svg>采购工作台</a>
+      <a href="#import" data-tab="import"><svg class="ico"><use href="#upload"/></svg>批量申请</a>
       <a href="#standard" data-tab="standard"><svg class="ico"><use href="#part"/></svg>标准件</a>
       <a href="#machining" data-tab="machining"><svg class="ico"><use href="#cube"/></svg>发加工</a>
       <a href="#cart" data-tab="cart"><svg class="ico"><use href="#cart"/></svg>购物车 <span id="cart-count" class="counter">0</span></a>
@@ -54,5 +55,6 @@
     <noscript>请启用 JavaScript 以加载申请单和 STEP 预览。</noscript>
   </main>
   <dialog id="preview-dialog" aria-labelledby="preview-title"><div id="preview-content"></div></dialog>
+<dialog id="pc-bulk-dialog" aria-labelledby="pc-bulk-title"><div class="dialog-head"><h2 id="pc-bulk-title">批量审核确认</h2><button class="btn compact" data-pc="close-bulk">关闭</button></div><div class="dialog-body stack"><p></p><div class="buttons"><button class="btn primary" data-pc="confirm-approve">确认通过这些申请</button><button class="btn" data-pc="close-bulk">返回检查</button></div></div></dialog>
 </body>
 </html>

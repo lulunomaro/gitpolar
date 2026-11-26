@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, unlink } from 'node:fs/promises';
-import { extname, join } from 'node:path';
+import { mkdir, open, unlink, writeFile } from 'node:fs/promises';
+import { extname, join, posix } from 'node:path';
+import { ZipFile } from 'yazl';
+import { parseProcurementImport, importLimit, importItemLimit } from './procurement-import.mjs';
 import { pipeline } from 'node:stream/promises';
 import { authenticate, body, fail, json, requireOrigin } from './auth.mjs';
 import { dataRoot } from './config.mjs';
@@ -189,7 +191,7 @@ const summaryFields = `r.id,r.title,r.team_id AS teamId,t.name AS teamName,r.sta
   (SELECT COUNT(*) FROM pc_items i WHERE i.request_id=r.id) AS itemCount`;
 const summaryFrom = 'FROM pc_requests r JOIN pc_teams t ON t.id=r.team_id JOIN users u ON u.id=r.applicant_id';
 
-function listRequests(user, params) {
+function requestFilter(user, params) {
   const conditions = [visible];
   const bindings = scope(user);
   const state = params.get('state');
@@ -206,7 +208,36 @@ function listRequests(user, params) {
       (SELECT 1 FROM pc_items i WHERE i.request_id=r.id AND (instr(lower(i.name),lower($q)) OR instr(lower(i.spec),lower($q)))))`);
     bindings.$q = query;
   }
-  return db.prepare(`SELECT ${summaryFields} ${summaryFrom} WHERE ${conditions.join(' AND ')} ORDER BY r.updated_at DESC,r.rowid DESC`).all(bindings);
+  for (const [key, operator] of [['from','>='],['to','<='],['date','=']]) {
+    const value = params.get(key);
+    if (!value) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value + 'T00:00:00Z')) || new Date(value + 'T00:00:00Z').toISOString().slice(0,10) !== value) fail(400, '日期须为有效的 YYYY-MM-DD。');
+    conditions.push("date(r.created_at,'+8 hours')" + operator + '$' + key);
+    bindings['$' + key] = value;
+  }
+  if (params.get('applicant')) { conditions.push('r.applicant_id=$applicant'); bindings.$applicant = integer(Number(params.get('applicant')), '提交人', 1); }
+  if (params.get('category')) {
+    bindings.$category = text(params.get('category'), '工艺分类', 500);
+    conditions.push("EXISTS(SELECT 1 FROM pc_items f WHERE f.request_id=r.id AND CASE WHEN f.kind='standard' THEN '标准件' ELSE COALESCE(NULLIF(f.process,''),'其他') END=$category)");
+  }
+  return {where: conditions.join(' AND '), bindings};
+}
+function listRequests(user, params) {
+  const {where,bindings} = requestFilter(user, params);
+  return db.prepare('SELECT ' + summaryFields + ' ' + summaryFrom + ' WHERE ' + where + ' ORDER BY r.created_at DESC,r.rowid DESC').all(bindings);
+}
+function workbench(user, params) {
+  const {where,bindings} = requestFilter(user, params);
+  const category = "CASE WHEN i.kind='standard' THEN '标准件' ELSE COALESCE(NULLIF(i.process,''),'其他') END";
+  const itemWhere = where + (params.get('category') ? ' AND ' + category + '=$category' : '') + (bindings.$q ? " AND (instr(lower(i.name),lower($q)) OR instr(lower(i.spec),lower($q)) OR instr(lower(r.title),lower($q)) OR instr(lower(u.username),lower($q)) OR instr(lower(u.display_name),lower($q)))" : '');
+  const offset = integer(Number(params.get('offset') || 0), '分页起点', 0);
+  const limit = integer(Number(params.get('limit') || 100), '每页数量', 1, 500);
+  const from = summaryFrom + ' JOIN pc_items i ON i.request_id=r.id';
+  const items = db.prepare('SELECT i.id,i.request_id AS requestId,i.ordinal,i.kind,i.name,i.spec,i.quantity,i.unit,i.unit_price_cents AS unitPriceCents,i.url,i.material,i.process,i.file_id AS fileId,i.drawing_file_id AS drawingFileId,' + category + ' AS category,r.title AS requestTitle,r.state,r.applicant_id AS applicantId,COALESCE(NULLIF(u.display_name,\'\'),u.username) AS applicantName,t.name AS teamName,r.created_at AS createdAt ' + from + ' WHERE ' + itemWhere + ' ORDER BY r.created_at DESC,r.rowid DESC,i.ordinal LIMIT $limit OFFSET $offset').all({...bindings,$limit:limit,$offset:offset});
+  const total = db.prepare('SELECT COUNT(*) AS n ' + from + ' WHERE ' + itemWhere).get(bindings).n;
+  const tree = db.prepare("SELECT date(r.created_at,'+8 hours') AS date,r.applicant_id AS applicantId,COALESCE(NULLIF(u.display_name,''),u.username) AS applicantName,COUNT(*) AS requestCount,SUM((SELECT COUNT(*) FROM pc_items s WHERE s.request_id=r.id)) AS itemCount " + summaryFrom + ' WHERE ' + visible + ' GROUP BY date,r.applicant_id ORDER BY date DESC,applicantName').all(scope(user));
+  const categories = db.prepare('SELECT ' + category + ' AS name,COUNT(*) AS count ' + from + ' WHERE ' + where + ' GROUP BY 1 ORDER BY 1').all(bindings);
+  return {requests:listRequests(user,params),items,total,offset,limit,tree,categories};
 }
 
 function requestHeader(user, id) {
@@ -273,6 +304,7 @@ function attachment(value, actor, applicantId, retained, extensions, required) {
 
 function replaceItems(requestId, values, actor, applicantId) {
   if (!Array.isArray(values) || !values.length) fail(400, '请至少提供一个采购明细。');
+  if (values.length > importItemLimit) fail(400, '每张申请最多 1000 个明细，请分批提交。');
   const retained = new Set(db.prepare('SELECT file_id,drawing_file_id FROM pc_items WHERE request_id=?')
     .all(requestId).flatMap(row => [row.file_id, row.drawing_file_id]));
   const insert = db.prepare(`INSERT INTO pc_items(id,request_id,ordinal,kind,name,spec,quantity,unit,unit_price_cents,
@@ -294,8 +326,9 @@ function replaceItems(requestId, values, actor, applicantId) {
     const url = purchaseUrl(input.url);
     const material = text(input.material, '材料', 200);
     const process = text(input.process, '工艺', 500);
-    const model = attachment(input.fileId, actor, applicantId, retained, ['.step', '.stp'], kind === 'machining');
+    const model = attachment(input.fileId, actor, applicantId, retained, ['.step', '.stp'], false);
     const drawing = attachment(input.drawingFileId, actor, applicantId, retained, ['.dwg'], false);
+    if (kind === 'machining' && !model && !drawing) fail(400, '加工件至少需要 STEP 模型或 DWG 图纸。');
     const threads = threadAnnotations(input.threads);
     if (threads.length && (kind !== 'machining' || !model)) fail(400, '请在加工件的 STEP 模型上标注螺纹孔。');
     insert.run(randomUUID(), requestId, index, kind, name, spec, quantity, unit, price,
@@ -469,6 +502,84 @@ async function download(user, res, id) {
   } finally { await handle.close(); }
 }
 
+async function importTable(req, params, owner) {
+  requireOrigin(req);
+  let parsed;
+  if (params.get('format') === 'paste') {
+    const input = object(await body(req, 4 * 1024 * 1024), '表格');
+    parsed = await parseProcurementImport(Buffer.from(text(input.text,'表格',4 * 1024 * 1024,true)), 'table.tsv', true);
+  } else {
+    const chunks = []; let size = 0;
+    for await (const chunk of req.iterator({destroyOnReturn:false})) {
+      size += chunk.length;
+      if (size > importLimit) fail(413, '整包大小上限为 128 MiB。');
+      chunks.push(chunk);
+    }
+    if (!size) fail(400, '导入文件为空。');
+    parsed = await parseProcurementImport(Buffer.concat(chunks), text(params.get('name'),'文件名',500,true));
+  }
+  const stored = [], memo = new Map();
+  async function save(file) {
+    if (!file) return null;
+    if (memo.has(file)) return memo.get(file);
+    const id = randomUUID(), name = fileName(posix.basename(file.name));
+    const path = join(fileDirectory,id);
+    await writeFile(path,file.bytes,{flag:'wx',mode:0o600});
+    stored.push({id,name,path,size:file.bytes.length,sha256:createHash('sha256').update(file.bytes).digest('hex')});
+    memo.set(file,id); return id;
+  }
+  try {
+    await mkdir(fileDirectory,{recursive:true});
+    for (const item of parsed.items) {
+      const pair = item._pair;
+      if (pair) {
+        item.fileId = await save(pair.model); item.drawingFileId = await save(pair.drawing);
+        item._stepName = pair.model ? posix.basename(pair.model.name) : '';
+        item._drawingName = pair.drawing ? posix.basename(pair.drawing.name) : '';
+      }
+      delete item._pair;
+    }
+    if (account(req).id !== owner.id) fail(403,'导入账号已变更。');
+    transaction(() => {
+      const insert = db.prepare('INSERT INTO pc_files(id,owner_id,name,size,sha256,created_at) VALUES(?,?,?,?,?,?)');
+      for (const file of stored) insert.run(file.id,owner.id,file.name,file.size,file.sha256,now());
+    });
+    return {items:parsed.items,warnings:parsed.warnings,sourceName:params.get('name') || '粘贴表格',attachmentCount:stored.length};
+  } catch (error) { await Promise.allSettled(stored.map(file => unlink(file.path))); throw error; }
+}
+function csvValue(value) {
+  let text = String(value ?? '');
+  if (/^[=+@-]/.test(text)) text = "'" + text;
+  return '"' + text.replaceAll('"','""') + '"';
+}
+async function exportItems(req, res, user) {
+  requireOrigin(req);
+  const input = object(await body(req), '导出');
+  if (!Array.isArray(input.itemIds) || !input.itemIds.length || input.itemIds.length > 1000) fail(400,'请选择 1～1000 个明细导出。');
+  const ids = [...new Set(input.itemIds.map(id => text(id,'明细 ID',64,true)))];
+  const bindings = scope(user);
+  ids.forEach((id,index) => { bindings['$item' + index] = id; });
+  const rows = db.prepare('SELECT i.*,r.title,r.created_at,COALESCE(NULLIF(u.display_name,\'\'),u.username) AS applicantName ' + summaryFrom + ' JOIN pc_items i ON i.request_id=r.id WHERE ' + visible + ' AND i.id IN (' + ids.map((_,i) => '$item' + i).join(',') + ') ORDER BY r.created_at DESC,r.rowid,i.ordinal').all(bindings);
+  if (rows.length !== ids.length) fail(404,'部分明细不存在或无权导出，请刷新列表。');
+  const columns = ['日期','提交人','申请批次','类别','零件名称','规格','数量','单位','预算单价（元）','购买链接','材料'];
+  const csv = '\uFEFF' + [columns, ...rows.map(row => [new Date(row.created_at).toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'}),row.applicantName,row.title,row.kind === 'standard' ? '标准件' : row.process || '其他',row.name,row.spec,row.quantity,row.unit,(row.unit_price_cents / 100).toFixed(2),row.url,row.material])].map(row => row.map(csvValue).join(',')).join('\r\n');
+  const zip = new ZipFile();
+  zip.addBuffer(Buffer.from(csv,'utf8'),'BOM.csv');
+  const segment = value => (String(value).replace(/[\\/<>:"|?*\x00-\x1f]/g,'_').replace(/^\.+$/,'_').slice(0,100) || '未命名');
+  for (const row of rows) {
+    const day = new Date(row.created_at).toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'});
+    const folder = [day,segment(row.applicantName),segment(row.title) + '_' + row.request_id.slice(0,8),segment(row.process || (row.kind === 'standard' ? '标准件' : '其他')),String(row.ordinal + 1).padStart(3,'0') + '_' + segment(row.name)].join('/');
+    for (const id of [row.file_id,row.drawing_file_id].filter(Boolean)) {
+      const file = db.prepare('SELECT name FROM pc_files WHERE id=?').get(id);
+      if (file) zip.addFile(join(fileDirectory,id),folder + '/' + segment(file.name));
+    }
+  }
+  res.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="gitpolar-procurement.zip"','Cache-Control':'private, no-store'});
+  zip.on('error',error => zip.outputStream.destroy(error));
+  zip.end();
+  await pipeline(zip.outputStream,res);
+}
+
 // `changed` is the Git repository SSE publisher. Procurement data is scoped per account.
 export async function procurementApi(req, res, pathname, params, changed) {
   const user = account(req);
@@ -479,6 +590,9 @@ export async function procurementApi(req, res, pathname, params, changed) {
     const result = transaction(() => fn(account(req), input));
     return json(res, result, status);
   }
+  if (route === '/workbench' && req.method === 'GET') return read(() => workbench(user,params));
+  if (route === '/imports' && req.method === 'POST') return json(res,await importTable(req,params,user),201);
+  if (route === '/export' && req.method === 'POST') return exportItems(req,res,user);
   if (route === '/meta' && req.method === 'GET') return read(() => meta(user));
   if (route === '/teams' && req.method === 'POST') return write(createTeam, 201);
   if (route === '/assignments' && req.method === 'PUT') return write(assign);

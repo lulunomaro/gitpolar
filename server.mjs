@@ -35,6 +35,7 @@ const assets=new Map([
   ['/login/app.js',['login/app.js','text/javascript; charset=utf-8']],['/login/styles.css',['login/styles.css','text/css; charset=utf-8']],
   ['/procurement',['procurement/index.html','text/html; charset=utf-8']],['/procurement/',['procurement/index.html','text/html; charset=utf-8']],
   ['/procurement/index.html',['procurement/index.html','text/html; charset=utf-8']],['/procurement/app.js',['procurement/app.js','text/javascript; charset=utf-8']],
+  ['/procurement/workbench.js',['procurement/workbench.js','text/javascript; charset=utf-8']],
   ['/procurement/styles.css',['procurement/styles.css','text/css; charset=utf-8']],['/procurement-viewer.js',['public/procurement-viewer.js','text/javascript; charset=utf-8']],
   ['/admin',['admin/index.html','text/html; charset=utf-8']],['/admin/',['admin/index.html','text/html; charset=utf-8']],
   ['/admin/index.html',['admin/index.html','text/html; charset=utf-8']],

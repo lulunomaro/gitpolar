@@ -1,3 +1,4 @@
+import { createWorkbench } from './workbench.js';
 const base = '/api/procurement';
 const $ = (selector, parent = document) => parent.querySelector(selector);
 const view = $('#view');
@@ -20,7 +21,7 @@ const stateBadge = state => badge(labels[state] || state, colors[state] || '');
 const btnLink = (hash, text, glyph, primary = false) => `<a class="btn${primary ? ' primary' : ''}" href="${esc(hash)}">${glyph ? icon(glyph) : ''}${esc(text)}</a>`;
 const cartLink = () => btnLink('#cart', '查看购物车', 'cart');
 const refreshButton = '<button type="button" class="btn" data-do="reload">' + icon('refresh') + '刷新</button>';
-const additions = () => btnLink('#standard', '添加标准件', 'plus', true) + btnLink('#machining', '导入加工件', 'cube');
+const additions = () => btnLink('#import', '批量申请 / 导入 BOM', 'upload', true) + btnLink('#standard', '添加标准件', 'plus') + btnLink('#machining', '单件 STEP / 标注', 'cube');
 const title = (heading, subtitle, right = '') => `<div class="heading"><div><h1>${esc(heading)}</h1>${subtitle ? `<p>${esc(subtitle)}</p>` : ''}</div>${right ? `<div class="actions">${right}</div>` : ''}</div>`;
 const panel = (heading, glyph, body, right = '') => `<section class="panel"><div class="panel-head"><h2>${icon(glyph)}${esc(heading)}</h2>${right}</div>${body}</section>`;
 const bodyPanel = (heading, glyph, body, right) => panel(heading, glyph, `<div class="panel-body">${body}</div>`, right);
@@ -52,7 +53,7 @@ const priceInput = value => value == null || value === 0 ? '' : (value / 100).to
 const field = (label, control, full = false, hint = '') => `<label class="field${full ? ' full' : ''}"><span>${esc(label)}</span>${control}${hint ? `<small>${esc(hint)}</small>` : ''}</label>`;
 const pair = (name, value) => `<dt>${esc(name)}</dt><dd>${esc(value || '—')}</dd>`;
 const abortError = error => error?.name === 'AbortError';
-let session, meta, baskets, storageKey, request, machine, liveViewer, modal, controller;
+let session, meta, baskets, storageKey, request, machine, liveViewer, modal, controller, workbenchUI;
 let serial = 0, saving = false, cartMemoryOnly = false;
 const filters = { q: '', state: '', mine: false };
 let stockQuery = '', stockKind = '';
@@ -124,13 +125,14 @@ function flow(state) {
   return `<ol class="flow" aria-label="采购流程">${steps.map(([, name], i) => `<li${i === active ? ' aria-current="step"' : ''} class="${i < active ? 'done' : ''}">${i < active ? icon('check') : ''}${name}</li>`).join('')}</ol>`;
 }
 function route() {
-  const [name, arg, extra] = location.hash.slice(1).split('/');
+  const [name, arg, extra] = location.hash.slice(1).split('?')[0].split('/');
   if (extra !== undefined) return { name: 'unknown' };
   try { return { name: name || 'requests', key: arg ? decodeURIComponent(arg) : '' }; }
   catch { return { name: 'unknown' }; }
 }
 function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
 function stopViews() {
+  workbenchUI?.dispose();
   controller?.abort();
   liveViewer?.dispose();
   liveViewer = null;
@@ -207,6 +209,7 @@ async function render() {
     else if (name === 'inventory') await inventoryPage(signal);
     else if (name === 'permissions') await permissionsPage(signal);
     else if (name === 'cart') cartPage();
+    else if (name === 'import') workbenchUI.importPage();
     else if (name === 'standard' || name === 'machining') {
       const item = key ? cart().items.find(it => it._key === key && it.kind === name) : null;
       if (key && !item) throw new Error('购物车中找不到此条目，请返回购物车。');
@@ -221,19 +224,8 @@ async function render() {
 function searchBox(value, label) {
   return `<label class="search-box">${icon('search')}<input name="q" type="search" maxlength="200" value="${esc(value)}" aria-label="${esc(label)}" placeholder="${esc(label)}"></label>`;
 }
-async function requestsPage(signal) {
-  view.innerHTML = loading('正在读取申请单…');
-  const params = new URLSearchParams();
-  if (filters.q) params.set('q', filters.q);
-  if (filters.state) params.set('state', filters.state);
-  if (filters.mine) params.set('mine', '1');
-  const { requests } = await api(`/requests?${params}`, { signal });
-  if (signal.aborted) return;
-  const filtered = Boolean(filters.q || filters.state || filters.mine);
-  const rows = requests.map(row => `<tr><td><div class="item-name"><a href="${esc(reqHash(row.id))}">${esc(row.title)}</a></div><div class="subline">${esc(row.applicantName)} · ${esc(row.teamName)} · ${esc(row.itemCount)} 项</div></td><td>${stateBadge(row.state)}</td><td class="num">${money(row.totalCents)}</td><td class="num">${esc(time(row.updatedAt))}</td></tr>`);
-  const filterForm = `<form class="toolbar" id="request-filter">${searchBox(filters.q, '搜索申请单')}<select name="state" aria-label="申请状态">${option('', '全部状态', filters.state)}${Object.entries(labels).map(([s, text]) => option(s, text, filters.state)).join('')}</select><label class="check-row"><input type="checkbox" name="mine"${filters.mine ? ' checked' : ''}>仅我的申请</label><button class="btn">筛选</button>${filtered ? '<button class="text-btn" type="button" data-do="reset-filters">清除</button>' : ''}</form>`;
-  view.innerHTML = title('采购申请', '查看标准件和加工件从申请到入库的进度。', additions() + refreshButton) + flow() + `<section class="panel" aria-label="申请单">${filterForm}${rows.length ? table(['申请单', '状态', '已填预算', '更新时间'], rows) : empty('list', filtered ? '没有符合条件的申请' : '还没有采购申请', filtered ? '可以清除筛选条件再查看。' : '把标准件或 STEP 加工件加入购物车，再提交给组长审核。', filtered ? '' : cartLink())}</section>`;
-}
+async function requestsPage(signal) { await workbenchUI.requestsPage(signal); }
+
 function standardPage(item) {
   const it = item || {};
   const form = `<form id="standard-form" data-key="${esc(it._key)}"><div class="fields">
@@ -455,10 +447,11 @@ function lineTable(items, context) {
   return table(['条目与规格', '数量', '预算单价', '操作'], items.map((it, i) => {
     const machining = it.kind === 'machining', link = safeUrl(it.url);
     const actions = [];
-    if (machining && it.fileId) {
-      actions.push(`<button type="button" class="btn compact" data-do="preview" data-source="${context}" data-index="${i}">${icon('cube')}预览与标注</button>`, `<a href="${esc(fileUrl(it.fileId))}" download>STEP</a>`);
+    if (machining || it.fileId || it.drawingFileId) {
+      if (it.fileId) actions.push(`<button type="button" class="btn compact" data-do="preview" data-source="${context}" data-index="${i}">${icon('cube')}预览与标注</button>`, `<a href="${esc(fileUrl(it.fileId))}" download>STEP</a>`);
       if (it.drawingFileId) actions.push(`<a href="${esc(fileUrl(it.drawingFileId))}" download>DWG</a>`);
     } else if (link) actions.push(`<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">商品链接 ${icon('link')}</a>`);
+    if (!machining && link && (it.fileId || it.drawingFileId)) actions.push(`<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">商品链接 ${icon('link')}</a>`);
     if (context === 'cart') {
       actions.push(`<a href="#${machining ? 'machining' : 'standard'}/${enc(it._key)}">编辑</a>`, `<button type="button" class="text-btn" data-do="remove-line" data-index="${i}">移除</button>`);
     }
@@ -470,9 +463,9 @@ function cartPage() {
   const teams = editing ? meta.teams.filter(t => String(t.id) === String(draft.teamId)) : applicantTeams();
   const count = draft.items.length, total = draft.items.reduce((sum, it) => sum + (it.unitPriceCents || 0) * it.quantity, 0);
   const form = `<form id="cart-form"><div class="fields">
-    ${field('申请标题', `<input name="title" value="${esc(draft.title)}" maxlength="120" required placeholder="例如：底盘装配所需零件">`, true)}
+    ${field('申请标题', `<input name="title" value="${esc(draft.title)}" maxlength="200" required placeholder="例如：底盘装配所需零件">`, true)}
     ${field('所属小组', `<select name="teamId" ${editing ? 'disabled' : 'required'}>${teams.map(t => option(t.id, t.name, draft.teamId)).join('')}</select>`, true)}
-    ${field('申请说明（选填）', `<textarea name="notes" maxlength="2000" placeholder="用途、期望到货日期等">${esc(draft.notes)}</textarea>`, true)}
+    ${field('申请说明（选填）', `<textarea name="notes" maxlength="4000" placeholder="用途、期望到货日期等">${esc(draft.notes)}</textarea>`, true)}
     </div><div class="mark-section"><div class="metric"><span>已填预算小计</span><strong>${money(total)}</strong></div>${draft.items.some(it => !it.unitPriceCents) ? '<small>含待核价条目，最终金额以采购订单为准。</small>' : ''}</div>
     <div class="form-foot"><button class="btn" name="intent" value="save"${count ? '' : ' disabled'}>${editing ? '保存修改' : '保存草稿'}</button><button class="btn primary" name="intent" value="submit"${count ? '' : ' disabled'}>${icon('check')}提交组长审核</button></div></form>`;
   const subtitle = editing ? '正在修改已有申请，保存后可再次提交审核。' : '将标准件与加工件合并成一张采购申请。';
@@ -826,4 +819,5 @@ document.addEventListener('visibilitychange', async () => {
     if (turn === serial && (current.user?.id ?? null) !== (meta?.user?.id ?? null)) await boot();
   } catch { /* The current form stays available if session revalidation is offline. */ }
 });
+workbenchUI = createWorkbench({api,fetchChecked,icon,money,time,notify,cart,remember,toKey,sendLine,go,render,viewerFactory,openPreview,fileUrl,stateBadge,actionsFor,actionForm,applicantTeams,meta:()=>meta,request:()=>request,setRequest:value=>{request=value;}});
 boot();
