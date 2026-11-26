@@ -27,6 +27,7 @@ export function git(name, args, options = {}) {
     child.stdin.on('error',()=>{});
     child.on('close',code=>{
       if (size>(options.max || 32*1024*1024)) return reject(new Error('Git output exceeded the configured read limit.'));
+      if(options.result) return resolvePromise({code,output:Buffer.concat(chunks).toString('utf8')});
       if(code && !options.allowFailure) { const error=new Error(errors.trim() || `Git exited with code ${code}.`); error.gitCode=code; return reject(error); }
       resolvePromise(options.buffer ? Buffer.concat(chunks) : Buffer.concat(chunks).toString('utf8'));
     });

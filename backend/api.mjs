@@ -12,16 +12,18 @@ import { cadProject } from './snapshot.mjs';
 import { previewInfo } from './preview.mjs';
 import { compareVersions,dependencyHistory } from './compare.mjs';
 import { commitGraph,graphCommit } from './graph.mjs';
+import { firmwareApi } from './firmware.mjs';
 
 function account(req,res,mutate=false) {
   const auth=authenticate(req);if(!auth)fail(401,'Sign in or use a gitpolar access token.');
   if(mutate&&!auth.token)requireOrigin(req);return auth.user;
 }
 export async function api(req,res,pathname,params,changed,events) {
+  if(pathname==='/api/firmware' || pathname.startsWith('/api/firmware/'))return firmwareApi(req,res,pathname,params,changed);
   if(pathname==='/api/health')return json(res,{ok:true,service:'gitpolar',storage:'git+sqlite+lfs'});
   if(pathname==='/api/session' && req.method==='GET') {
     const auth=authenticate(req);
-    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,setupRequired:!userCount(),callbackUrl,loginUrl:githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{git:true,lfs:true,locks:true,cad:true,preview:true,hydratedArchives:true,history:true,ssh:false,issues:true,pulls:false}});
+    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,setupRequired:!userCount(),callbackUrl,loginUrl:githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{git:true,lfs:true,locks:true,cad:true,preview:true,hydratedArchives:true,history:true,ssh:false,issues:true,pulls:false,firmware:Boolean(process.env.FIRMWARE_GIT_URL)}});
   }
   if(pathname==='/api/setup' && req.method==='POST') {
     requireOrigin(req);const user=await createUser(await body(req),true);newSession(res,user);return json(res,{user},201);

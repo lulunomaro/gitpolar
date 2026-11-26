@@ -1,5 +1,7 @@
 # 应用接口
 
+电控的车组、分支权限、draw.io、个人工位、串口、构建和实机核验接口见 [电控工作区后端](FIRMWARE.md)。
+
 统一前缀 `/api`。浏览器使用 HttpOnly 会话 Cookie；脚本可使用 `Authorization: Bearer gitpolar_...`。依赖 Cookie 的写操作需要匹配 `APP_ORIGIN` 的 `Origin` 头。
 
 | 方法与路径 | 用途 |
