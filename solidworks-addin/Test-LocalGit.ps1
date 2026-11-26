@@ -46,4 +46,36 @@ try{[void][Gitpolar.SolidWorks.GitpolarPane]::SafePath($fixture,'../outside.sldp
 [IO.File]::AppendAllText((Join-Path $fixture $unicode),'changed')
 $changed=$serializer.Serialize([Gitpolar.SolidWorks.GitpolarPane]::ChangedFiles($fixture)) | ConvertFrom-Json
 if($changed[0].path -ne $unicode){throw 'Changed-file decoding failed.'}
+$pane=[Gitpolar.SolidWorks.GitpolarPane]::new($null)
+function Save-Selection([string[]]$Paths) {
+  $values=New-Object 'System.Collections.Generic.Dictionary[string,object]'
+  $values.Add('message','Save selected drawings')
+  $values.Add('files',$Paths)
+  [void]$pane.Dispatch('commit',$values,$fixture).GetAwaiter().GetResult()
+}
+$similar=$unicode.Replace('[1]','1')
+[IO.File]::WriteAllText((Join-Path $fixture $similar),'similar part')
+[void](Git @('--literal-pathspecs','add','--',$similar))
+[void](Git @('commit','--only','-m','Similar part','--',$similar))
+[IO.File]::AppendAllText((Join-Path $fixture $similar),'unselected edit')
+[void](Git @('add','--','binary-export.dat'))
+Save-Selection @($unicode)
+$paths=Git @('diff-tree','--no-commit-id','--name-only','-r','-z','HEAD')
+if($paths -cne ($unicode+[char]0)){throw 'Saving one drawing also committed a similarly named part.'}
+$renamed='Renamed [2].SLDPRT'
+[void](Git @('mv','--',$unicode,$renamed))
+Save-Selection @($renamed)
+if((Git @('ls-tree','--name-only','-z','HEAD','--',$renamed)) -cne ($renamed+[char]0) -or (Git @('ls-tree','--name-only','HEAD','--',$unicode))){throw 'Staged drawing rename was not committed.'}
+[void](Git @('--literal-pathspecs','rm','--',$renamed))
+Save-Selection @($renamed)
+if(Git @('ls-tree','--name-only','HEAD','--',$renamed)){throw 'Staged drawing deletion was not committed.'}
+$many=@(foreach($i in 1..330){
+  $name='part-'+$i.ToString('D4')+'-'+('a'*90)+'.SLDPRT'
+  [IO.File]::WriteAllText((Join-Path $fixture $name),'new part')
+  $name
+})
+Save-Selection $many
+$added=Git @('diff-tree','--no-commit-id','--name-only','-r','-z','HEAD')
+if($added -cne (($many -join [char]0)+[char]0)){throw 'Large assembly selection did not match the committed paths.'}
+if((Git @('diff','--cached','--name-only','-z')) -cne ('binary-export.dat'+[char]0)){throw 'Unselected staging changed.'}
 [pscustomobject]@{ok=$true;commits=$json.commits.Count;mergeParents=$json.commits[1].parents.Count;unicode=$true;argumentRoundtrip=$true;pathBoundary=$true;fixture=$fixture}|ConvertTo-Json -Compress

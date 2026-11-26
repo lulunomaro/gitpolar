@@ -18,6 +18,7 @@ import { procurementApi } from './procurement.mjs';
 import { warehouseApi } from './feishu-warehouse.mjs';
 import { feishuCliApi } from './feishu-cli.mjs';
 import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
+import { firmwareApi } from './firmware.mjs';
 
 function account(req,res,mutate=false) {
   const auth=authenticate(req);if(!auth)fail(401,'Sign in or use a gitpolar access token.');
@@ -28,10 +29,11 @@ export async function api(req,res,pathname,params,changed,events) {
   if(pathname.startsWith('/api/procurement/feishu/'))return warehouseApi(req,res,pathname,params);
   if(pathname==='/api/procurement'||pathname.startsWith('/api/procurement/'))return procurementApi(req,res,pathname,params,changed);
   if(pathname==='/api/admin'||pathname.startsWith('/api/admin/'))return adminApi(req,res,pathname,params,changed);
+  if(pathname==='/api/firmware' || pathname.startsWith('/api/firmware/'))return firmwareApi(req,res,pathname,params,changed);
   if(pathname==='/api/health')return json(res,{ok:true,service:'gitpolar',storage:'git+sqlite+lfs'});
   if(pathname==='/api/session' && req.method==='GET') {
     const auth=authenticate(req);
-    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,authProvider,setupRequired:!userCount(),feishuLoginUrl:feishuConfigured?new URL('/auth/feishu',origin).href:null,feishuCallbackUrl,feishuLinked:Boolean(auth?.user&&hasFeishuIdentity(auth.user.id)),callbackUrl,loginUrl:authProvider!=='feishu'&&githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{procurement:true,admin:true,repositoryContext:true,git:true,lfs:true,locks:true,cad:true,preview:true,hydratedArchives:true,history:true,ssh:false,issues:true,pulls:false}});
+    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,authProvider,setupRequired:!userCount(),feishuLoginUrl:feishuConfigured?new URL('/auth/feishu',origin).href:null,feishuCallbackUrl,feishuLinked:Boolean(auth?.user&&hasFeishuIdentity(auth.user.id)),callbackUrl,loginUrl:authProvider!=='feishu'&&githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{procurement:true,admin:true,repositoryContext:true,git:true,lfs:true,locks:true,cad:true,preview:true,hydratedArchives:true,history:true,ssh:false,issues:true,pulls:false,firmware:Boolean(process.env.FIRMWARE_GIT_URL)}});
   }
   if(pathname==='/api/setup' && req.method==='POST') {
     if(authProvider==='feishu')fail(403,'Only Feishu sign-in is enabled.');

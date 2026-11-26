@@ -268,7 +268,7 @@ test('dependency-scoped assembly history, reusable preview assets and exact revi
     const token=(await request(server,'/api/tokens',{method:'POST',cookie,body:{name:'Comparison test'}})).value.token,git=gitClient('admin',token);
     await request(server,'/api/repos',{method:'POST',cookie,body:{name:'compare-cad',initialize:true,cad:true}});
     const work=join(directory,'work');await git(['clone',server.origin+'/polar-lab/compare-cad.git',work],root);await configure(git,work,'admin');
-    const assembly='装配/测试.SLDASM',partA='零件/支架 A.SLDPRT',partB='零件/轮毂.SLDPRT',unrelated='另一个工程/无关零件.SLDPRT';
+    const assembly='装配/测试.SLDASM',partA='零件/支架[1].SLDPRT',partB='零件/轮毂.SLDPRT',unrelated='零件/支架1.SLDPRT';
     for(const file of [assembly,partA,partB,unrelated]){await mkdir(join(work,file,'..'),{recursive:true});await writeFile(join(work,file),randomBytes(2048));}
     function boxStl(width){const v=[[0,0,0],[width,0,0],[width,20,0],[0,20,0],[0,0,15],[width,0,15],[width,20,15],[0,20,15]],faces=[[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7]];const out=Buffer.alloc(84+faces.length*50);out.writeUInt32LE(faces.length,80);for(const [i,face]of faces.entries())for(let j=0;j<9;j++)out.writeFloatLE(v[face[Math.floor(j/3)]][j%3],84+i*50+12+j*4);return out;}
     async function asset(width){const data=boxStl(width),file='.gitpolar/previews/'+createHash('sha256').update(data).digest('hex')+'.stl';await mkdir(join(work,'.gitpolar/previews'),{recursive:true});await writeFile(join(work,file),data);return {path:file,previewOid:(await git(['hash-object','--path='+file,'--',file],work)).stdout.trim()};}
@@ -281,6 +281,13 @@ test('dependency-scoped assembly history, reusable preview assets and exact revi
     const query=(ref,path)=>new URLSearchParams({ref,path}),preview=async(ref,path=assembly)=>(await request(server,'/api/repos/compare-cad/preview?'+query(ref,path),{cookie})).value;
     const initial=await preview(v1);assert.equal(initial.available,true);assert.equal(initial.format,'scene');assert.equal(initial.components.length,3);assert.equal(initial.assets.length,2);assert.equal(initial.size,1368);
     await chmod(join(work,unrelated),0o666);await writeFile(join(work,unrelated),randomBytes(2051));const unrelatedCommit=await commit('Unrelated CAD edit');assert.equal((await preview('main')).available,true);
+    await t.test('drawing rows show the last commit for the exact filename',async()=>{
+      const rows=await request(server,'/api/repos/compare-cad/browse?'+query(unrelatedCommit,'零件'),{cookie});
+      assert.equal(rows.status,200);
+      const latest=new Map(rows.value.entries.map(file=>[file.path,file.lastCommit.oid]));
+      assert.equal(latest.get(unrelated),unrelatedCommit);
+      assert.equal(latest.get(partA),v1);
+    });
     await chmod(join(work,partA),0o666);await writeFile(join(work,partA),randomBytes(4097));const changedAsset=await asset(45);await saveManifest(changedAsset);const v2=await commit('Change bracket only');
     const comparison=await request(server,'/api/repos/compare-cad/compare?'+new URLSearchParams({base:v1,head:v2,path:assembly}),{cookie});assert.equal(comparison.status,200);const result=comparison.value;
     assert.equal(result.base.oid,v1);assert.equal(result.head.oid,v2);assert.equal(result.previews.base.available,true);assert.equal(result.previews.head.available,true);assert.equal(result.changes.some(c=>c.path===assembly),false);assert.equal(result.changes.find(c=>c.path===partA).dependency,true);assert.equal(result.changes.find(c=>c.path===unrelated).dependency,false);assert.equal(result.components.find(c=>c.id==='Bracket-1').status,'modified');assert.equal(result.components.filter(c=>c.status==='unchanged').length,2);
@@ -290,6 +297,18 @@ test('dependency-scoped assembly history, reusable preview assets and exact revi
     const exactNew=await fetch(server.origin+result.previews.head.assets.find(a=>a.path===changedAsset.path).url,{headers:{cookie}});assert.deepEqual(Buffer.from(await exactNew.arrayBuffer()),boxStl(45));
     await saveManifest(changedAsset,12);const moved=await commit('Move an existing instance');const moveDiff=(await request(server,'/api/repos/compare-cad/compare?'+new URLSearchParams({base:v2,head:moved,path:assembly}),{cookie})).value;assert.equal(moveDiff.components.find(c=>c.id==='Bracket-1').status,'moved');assert.equal(moveDiff.storage.newNativeBytes,0);assert.equal(moveDiff.storage.newPreviewBytes,0);const movedHistory=(await request(server,'/api/repos/compare-cad/history?'+new URLSearchParams({ref:moved,path:assembly,scope:'dependencies'}),{cookie})).value;assert.equal(movedHistory.commits.find(c=>c.oid===moved).previewOnly,true);assert.equal(movedHistory.commits.find(c=>c.oid===moved).dependencyOnly,false);
     await chmod(join(work,partB),0o666);await writeFile(join(work,partB),randomBytes(2077));const stale=await commit('Change dependency without updating previews');assert.equal((await preview(stale)).reason,'stale');assert.equal((await preview(stale,partA)).available,true);assert.equal((await preview(v1)).available,true);
+    await t.test('assembly history records preview re-registration and replacement of a referenced mesh',async()=>{
+      await saveManifest(changedAsset,12);
+      const renewed=await commit('Register unchanged meshes for the revised wheel');
+      assert.equal((await preview(renewed)).available,true);
+      await writeFile(join(work,wheelAsset.path),boxStl(22));
+      const replaced=await commit('Replace the registered wheel mesh');
+      assert.equal((await preview(replaced)).reason,'stale');
+      const page=await request(server,'/api/repos/compare-cad/history?'+new URLSearchParams({ref:replaced,path:assembly,scope:'dependencies'}),{cookie});
+      assert.equal(page.status,200);
+      assert.deepEqual(page.value.commits.slice(0,3).map(c=>[c.oid,c.previewOnly,c.dependencyOnly]),
+        [[replaced,true,false],[renewed,true,false],[stale,false,true]]);
+    });
     const noAuth=await request(server,'/api/repos/compare-cad/compare?head=main');assert.equal(noAuth.status,401);assert.equal((await request(server,'/api/repos/compare-cad/compare?head=main&path=../escape.SLDPRT',{cookie})).status,400);assert.equal((await request(server,'/api/repos/compare-cad/compare?head=main&path=missing.SLDPRT',{cookie})).status,404);
     t.diagnostic('Changed references appear without rewriting the assembly; unrelated parts reuse previews; instance moves add no mesh; old and new content stays pinned. Browser fixture: '+directory+'; versions '+v1+' / '+v2);
   }finally{await server.stop();}

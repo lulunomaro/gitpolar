@@ -23,4 +23,23 @@ $session=[Gitpolar.SolidWorks.CadMergeStore]::Load($fixture);[Gitpolar.SolidWork
 $held=[IO.File]::Open((Join-Path $fixture '零件.SLDPRT'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite);try{Check ([Gitpolar.SolidWorks.CadMergeStore]::Hash((Join-Path $fixture '零件.SLDPRT')).Length -eq 64) 'An open CAD file could not be fingerprinted.'}finally{$held.Dispose()}
 [IO.File]::WriteAllBytes((Join-Path $fixture '零件.SLDPRT'),[byte[]](0,7,255));Refused {Action 'continue-merge'} 'A result changed after approval was committed.';[void](G @('add','零件.SLDPRT'));$session.Applied[0].Hash=[Gitpolar.SolidWorks.CadMergeStore]::Hash((Join-Path $fixture '零件.SLDPRT'));[Gitpolar.SolidWorks.CadMergeStore]::Save($fixture,$session);[void](Action 'continue-merge');$parents=(G @('show','-s','--format=%P')).Trim().Split(' ')
 Check ($parents.Count -eq 2 -and $parents[0] -eq $ours -and $parents[1] -eq $theirs) 'Final merge does not retain the exact two parents.';Check (([Gitpolar.SolidWorks.CadMergeStore]::Load($fixture)).State -eq 'completed') 'Manual session did not complete.'
+$drawing='Plate[1].SLDPRT';$similar='Plate1.SLDPRT'
+foreach($path in @($drawing,$similar)){[IO.File]::WriteAllBytes((Join-Path $fixture $path),[byte[]](0,1))}
+Commit 'Similar drawing names'
+[void](Action 'create-branch' @{name='codex/replace-drawing';switch=$true})
+[void](G @('--literal-pathspecs','rm','--',$drawing))
+[IO.File]::WriteAllBytes((Join-Path $fixture $similar),[byte[]](0,2));Commit 'Delete one drawing and edit its neighbor'
+[void](Action 'checkout' @{reference='refs/heads/main'})
+foreach($path in @($drawing,$similar)){[IO.File]::WriteAllBytes((Join-Path $fixture $path),[byte[]](0,3))}
+Commit 'Edit both drawings'
+[void](Action 'merge' @{reference='refs/heads/codex/replace-drawing'})
+[void](Action 'mark-manual-resolved' @{path=$drawing;confirmed=$true})
+Check (([Gitpolar.SolidWorks.RepositoryGit]::Conflicts($fixture) -join ',') -ceq $similar) 'Marking a drawing resolved also staged its neighbor.'
+[void](Action 'abort-merge')
+[void](Action 'merge' @{reference='refs/heads/codex/replace-drawing'})
+[void](Action 'resolve-conflict' @{path=$drawing;side='theirs'})
+Check (-not [IO.File]::Exists((Join-Path $fixture $drawing))) 'The selected deletion was not applied.'
+Check (([Gitpolar.SolidWorks.RepositoryGit]::Conflicts($fixture) -join ',') -ceq $similar) 'Resolving one drawing changed the other conflict.'
+[void](Action 'resolve-conflict' @{path=$similar;side='ours'})
+[void](Action 'continue-merge')
 [pscustomobject]@{ok=$true;cleanMergePaused=$true;explicitConfirmation=$true;onlySelectedConflictStaged=$true;textMarkersRefused=$true;stalePairRefused=$true;changedResultRefused=$true;exactTwoParents=$true;fixture=$fixture}|ConvertTo-Json -Compress

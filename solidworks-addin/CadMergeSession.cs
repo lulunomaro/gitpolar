@@ -37,7 +37,7 @@ namespace Gitpolar.SolidWorks {
       if(!confirmed)throw new InvalidOperationException("请先确认图纸已经手工处理并保存，再标记解决。");if(!RepositoryGit.Merging(workspace))throw new InvalidOperationException("当前没有待完成的合并。");
       var files=paths.Distinct(StringComparer.Ordinal).ToArray();if(files.Length==0)throw new InvalidOperationException("请选择已经保存的冲突文件。");var conflicts=new HashSet<string>(RepositoryGit.Conflicts(workspace),StringComparer.Ordinal);
       foreach(string relative in files){string file=GitpolarPane.SafePath(workspace,relative);if(!conflicts.Contains(relative))throw new InvalidOperationException("文件已不是待处理冲突，请刷新："+relative);if(!File.Exists(file))throw new InvalidOperationException("文件不存在。删除冲突请明确选择保留已删除的一边："+relative);if(new FileInfo(file).Length<=1024&&File.ReadAllText(file).StartsWith("version https://git-lfs.github.com/spec/v1"))throw new InvalidOperationException("图纸仍是 LFS 指针，不能标记为人工结果："+relative);if(!GitpolarPane.IsCadFile(relative)){string text=File.ReadAllText(file);if(text.Split('\n').Any(line=>line.StartsWith("<<<<<<< ")||line.StartsWith("=======")||line.StartsWith(">>>>>>> ")))throw new InvalidOperationException("文件仍包含文本冲突标记："+relative);}}
-      var args=new List<string>{"add","--"};args.AddRange(files);Git.Run(workspace,args.ToArray());return files;
+      Git.WithPathsAsync(workspace,files,"add").GetAwaiter().GetResult();return files;
     }
     public static void Finish(string workspace,bool aborted){var session=Load(workspace);if(!Active(session))return;session.State=aborted?"aborted":"completed";if(!aborted)session.Commit=Git.Run(workspace,"rev-parse","HEAD").Trim();Save(workspace,session);}
   }

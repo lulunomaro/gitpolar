@@ -1,0 +1,7 @@
+{
+  "server": "http://127.0.0.1:4317",
+  "workdir": "D:\\gitpolar-work\\firmware",
+  "checkout": "D:\\StandardRobot++\\27_Reinstall_RoboticArm",
+  "keil": "D:\\Keil5\\UV4\\UV4.exe",
+  "cubemx": "D:\\ST\\STM32CubeMX\\STM32CubeMX.exe"
+}

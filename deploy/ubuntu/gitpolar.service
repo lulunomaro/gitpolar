@@ -1,0 +1,24 @@
+[Unit]
+Description=Gitpolar LAN Git and procurement service
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/var/lib/gitpolar /var/lib/gitpolar/repositories /var/lib/gitpolar/lfs /var/lib/gitpolar/procurement /mnt/hdd1
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=/opt/gitpolar/current
+EnvironmentFile=/etc/gitpolar/gitpolar.env
+Environment=PATH=/opt/gitpolar/runtime/node/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/gitpolar/runtime/node/bin/node /opt/gitpolar/current/server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0027
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gitpolar
+
+[Install]
+WantedBy=multi-user.target

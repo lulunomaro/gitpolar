@@ -6,3 +6,9 @@ data
 node_modules
 assets/gitpolar-original.png
 *.zip
+**/__pycache__
+tools/firmware/station.json
+
+artifacts/
+solidworks-addin/bin*/
+solidworks-addin/vendor/*.dll

@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "test": "node --test --test-concurrency=1 tests/integration.test.mjs tests/compare-navigation.test.mjs tests/graph.test.mjs tests/procurement.test.mjs tests/procurement-workbench.test.mjs tests/feishu.test.mjs tests/feishu-cli.test.mjs tests/runtime.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/integration.test.mjs tests/compare-navigation.test.mjs tests/graph.test.mjs tests/firmware.test.mjs tests/procurement.test.mjs tests/procurement-workbench.test.mjs tests/feishu.test.mjs tests/feishu-cli.test.mjs tests/runtime.test.mjs",
     "build:viewer": "node scripts/build-viewer.mjs",
     "package:nas": "node scripts/package-nas.mjs",
     "build:solidworks": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File solidworks-addin/Build.ps1",
