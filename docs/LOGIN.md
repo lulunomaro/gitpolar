@@ -42,4 +42,8 @@ Docker 镜像已安装固定版本 @larksuite/cli@1.0.100，CLI 配置持久化�
 
 同一 NAS 的 CLI 授权串行执行，其他成员正在扫码时页面会提示稍后重试；已经登录的成员不受影响。CLI 缓存用户不能用作本次网页登录的身份回退。
 
-代码更新后需要重启后端。只更新静态 JS 无法让旧进程加载新的 /login/ 路由和接口。当前开发机上停止旧 4317 进程及另启 4318 新版服务都被自动审批拒绝（blocked by policy），旧进程未被替换。须由运行服务的人在原终端停止后重新执行 npm start，或在 NAS 重建容器。
+代码更新后需要重启后端。只更新静态 JS 无法让旧进程加载新的 /login/ 路由和接口。在原终端停止后重新执行 npm start，或在 NAS 重建容器。重启后检查 /api/health 和 /api/feishu-cli/status，再从 /login/ 重新扫码。
+
+CLI 的 api 命令返回 {ok:true, identity:"user", data}，原始 OpenAPI 返回 {code:0, data}，后端兼容这两种格式。仍会核对本次授权返回的 open_id 与 user_info 完全一致，不使用历史缓存用户签发会话。
+
+扫码失败时，poll 接口返回安全的 errorCode 和中文说明：feishu_authorization_failed（授权未完成）、feishu_identity_failed（身份校验失败）、feishu_workspace_denied（未获准加入工作区）、feishu_account_failed（账号创建失败）。这些响应不包含令牌、设备码或 CLI 原始输出。

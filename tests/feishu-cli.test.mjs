@@ -82,7 +82,7 @@ function inspect(server, work) {
   try { return work(db); } finally { db.close(); }
 }
 
-test('device flow binds QR and polling to the browser, isolates personal CLI config, and issues one Feishu session', {timeout: 20_000}, async t => {
+test('real CLI success envelope binds QR and polling to the browser, isolates personal config, and issues one Feishu session', {timeout: 20_000}, async t => {
   const server = await launch(t);
   const status = await cli(server, '/status');
   assert.equal(status.status, 200);
@@ -199,11 +199,11 @@ test('expiration stops the owned completion command and releases the single-flow
 test('completion output, exact verified user ID, tenant and allow policy are required; cached login is never a fallback', {timeout: 25_000}, async t => {
   const server = await launch(t);
   for (const settings of [
-    {missingIdentity: true},
-    {missingIdentity: false, completedId: 'ou_scan', verifiedId: 'ou_cached'},
-    {completedId: 'ou_operator', verifiedId: 'ou_operator', tenant: ''},
-    {tenant: 'foreign-team', completedId: 'ou_foreign', verifiedId: 'ou_foreign'},
-    {tenant: 'nas-team', completedId: 'ou_operator', verifiedId: 'ou_operator', failCommand: true}
+    {missingIdentity: true, errorCode: 'feishu_authorization_failed'},
+    {missingIdentity: false, completedId: 'ou_scan', verifiedId: 'ou_cached', errorCode: 'feishu_identity_failed'},
+    {completedId: 'ou_operator', verifiedId: 'ou_operator', tenant: '', errorCode: 'feishu_identity_failed'},
+    {tenant: 'foreign-team', completedId: 'ou_foreign', verifiedId: 'ou_foreign', errorCode: 'feishu_workspace_denied'},
+    {tenant: 'nas-team', completedId: 'ou_operator', verifiedId: 'ou_operator', failCommand: true, errorCode: 'feishu_authorization_failed'}
   ]) {
     await server.configure({...settings, complete: false});
     const flow = await start(server);
@@ -211,6 +211,8 @@ test('completion output, exact verified user ID, tenant and allow policy are req
     await server.configure({complete: true});
     const result = await untilStatus(server, flow, 'failed');
     assert.equal(result.cookie, undefined);
+    assert.equal(result.value.errorCode, settings.errorCode);
+    assert.ok(result.value.message.length > 0);
     assert.ok(!JSON.stringify(result.value).includes('private-device'));
     assert.ok(!JSON.stringify(result.value).includes('ou_cached'));
     inspect(server, db => {
@@ -243,9 +245,33 @@ test('legacy completion fields use the same verified identity and cannot bypass 
   assert.equal((await untilStatus(denied, deniedFlow, 'failed')).cookie, undefined);
   inspect(denied, db => assert.equal(db.prepare('SELECT COUNT(*) AS n FROM users').get().n, 0));
   const allowed = await launch(t, {explicit: true, extra: {FEISHU_ADMIN_OPEN_IDS: 'ou_designated'},
-    settings: {legacy: true, completedId: 'ou_designated'}});
+    settings: {legacy: true, rawUserInfo: true, completedId: 'ou_designated'}});
   const flow = await start(allowed);
   await allowed.configure({complete: true});
   const authorized = await untilStatus(allowed, flow, 'authorized');
   assert.equal((await request(allowed, '/api/session', {cookie: authorized.cookie})).value.user.role, 'admin');
+});
+
+
+test('CLI identity verification rejects failed, bot and missing-success envelopes even with matching cached identity', {timeout: 15_000}, async t => {
+  const server = await launch(t);
+  for (const userInfoEnvelope of [
+    {ok: false, code: 0},
+    {ok: true, identity: 'bot'},
+    {ok: null},
+    {ok: 'true'}
+  ]) {
+    await server.configure({userInfoEnvelope, complete: false});
+    const flow = await start(server);
+    assert.equal(flow.status, 200);
+    await server.configure({complete: true});
+    const denied = await untilStatus(server, flow, 'failed');
+    assert.equal(denied.value.errorCode, 'feishu_identity_failed');
+    assert.match(denied.value.message, /授权已完成/);
+    assert.equal(denied.cookie, undefined);
+    inspect(server, db => {
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM users').get().n, 0);
+      assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 0);
+    });
+  }
 });

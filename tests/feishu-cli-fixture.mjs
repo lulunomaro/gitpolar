@@ -35,8 +35,10 @@ if (process.argv[2] !== '--server') {
     if (args[1] !== 'GET' || args[2] !== '/open-apis/authen/v1/user_info' || args[args.indexOf('--as') + 1] !== 'user') {
       throw new Error('Wrong user verification command');
     }
-    out({code: 0, data: {open_id: config.verifiedId ?? config.completedId ?? 'ou_operator',
-      tenant_key: config.tenant === undefined ? 'nas-team' : config.tenant, name: config.userName ?? '飞书项管'}});
+    const data = {open_id: config.verifiedId ?? config.completedId ?? 'ou_operator',
+      tenant_key: config.tenant === undefined ? 'nas-team' : config.tenant, name: config.userName ?? '飞书项管'};
+    // Match the installed v1.0.100 CLI: api normalizes OpenAPI replies into {ok, identity, data}.
+    out({...(config.rawUserInfo ? {code: 0, data} : {ok: true, identity: 'user', data}), ...config.userInfoEnvelope});
   } else throw new Error('Unexpected mock CLI command');
 } else {
   const { createServer } = await import('node:http');

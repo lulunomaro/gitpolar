@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { access, chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { delimiter, extname, join, resolve } from 'node:path';
-import { cookie, fail, hash, json, newSession, random, requireOrigin, setCookie } from './auth.mjs';
+import { cookie, fail, hash, HttpError, json, newSession, random, requireOrigin, setCookie } from './auth.mjs';
 import { dataRoot } from './config.mjs';
 import { getOrCreateFeishuUser } from './feishu.mjs';
 
@@ -16,7 +16,13 @@ const runtimeConfig = explicitConfig ? sourceConfig : join(dataRoot, 'lark-cli-l
 const flows = new Map();
 let active, cachedStatus, statusWork;
 const pngHeader = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-const publicFailure = '飞书 CLI 登录未完成，请重新扫码；如仍失败，请检查 NAS 上的 CLI 配置。';
+const publicFailure = '飞书登录未完成，请重新扫码；如仍失败，请联系管理员检查后端登录服务。';
+const loginFailures = {
+  authorization: {errorCode: 'feishu_authorization_failed', message: '飞书授权未完成，请重新生成二维码并在飞书中确认。'},
+  identity: {errorCode: 'feishu_identity_failed', message: '飞书授权已完成，但未能验证登录身份。请重新扫码；如仍失败，请联系管理员检查飞书连接。'},
+  account: {errorCode: 'feishu_account_failed', message: '飞书身份已验证，但创建 gitpolar 账号失败，请联系管理员检查后端。'},
+  denied: {errorCode: 'feishu_workspace_denied', message: '飞书授权已完成，但该账号尚未获准加入此工作区，请联系项目管理员。'}
+};
 
 async function executable() {
   const configured = process.env.FEISHU_CLI_BIN?.trim();
@@ -140,6 +146,7 @@ function responseFor(flow) {
 }
 
 async function finish(flow) {
+  let phase = 'authorization';
   try {
     const completed = parse(await cli(flow.bin, ['auth', 'login', '--device-code', flow.deviceCode, '--json'], {
       configDir: runtimeConfig, signal: flow.controller.signal, timeout: Math.max(1, flow.expiresAt - Date.now())
@@ -149,20 +156,30 @@ async function finish(flow) {
     const completedName = completed.event === 'authorization_complete' ? completed.user_name : completed.userName;
     if (completed.success === false || typeof completedId !== 'string' || !completedId || completedId.length > 256
       || typeof completedName !== 'string') throw new Error(publicFailure);
+    phase = 'identity';
     const result = parse(await cli(flow.bin, ['api', 'GET', '/open-apis/authen/v1/user_info', '--as', 'user'], {
       configDir: runtimeConfig, signal: flow.controller.signal, timeout: Math.max(1, Math.min(15_000, flow.expiresAt - Date.now()))
     }));
     const identity = result.data;
-    if (result.code !== 0 || identity?.open_id !== completedId || typeof identity.tenant_key !== 'string' || !identity.tenant_key.trim()) {
+    // CLI api returns {ok:true, identity:'user', data}; raw OpenAPI replies use {code:0, data}.
+    // If a CLI success marker is present, it must succeed as the user even if code is also 0.
+    const verified = Object.hasOwn(result, 'ok')
+      ? result.ok === true && result.identity === 'user'
+      : result.code === 0 && (!Object.hasOwn(result, 'identity') || result.identity === 'user');
+    if (!verified || identity?.open_id !== completedId || typeof identity.tenant_key !== 'string' || !identity.tenant_key.trim()) {
       throw new Error(publicFailure);
     }
     if (flow.status !== 'pending' || Date.now() >= flow.expiresAt) { expire(flow); return; }
+    phase = 'account';
     flow.user = getOrCreateFeishuUser(identity, {bootstrapAdminIds: flow.bootstrapId ? [flow.bootstrapId] : []});
     // The verified identity is now independent of the CLI's shared credential cache.
     flow.ready = true;
     clearTimeout(flow.timer);
-  } catch {
-    if (flow.status === 'pending') flow.status = Date.now() >= flow.expiresAt ? 'expired' : 'failed';
+  } catch (error) {
+    if (flow.status === 'pending') {
+      flow.status = Date.now() >= flow.expiresAt ? 'expired' : 'failed';
+      flow.failure = loginFailures[error instanceof HttpError && error.status === 403 ? 'denied' : phase];
+    }
   } finally {
     flow.deviceCode = null;
     if (active === flow) active = null;
@@ -247,7 +264,7 @@ export async function feishuCliApi(req, res, pathname, params) {
       newSession(res, flow.user, 'feishu');
       flow.status = 'authorized';
     }
-    return json(res, {status: flow.status, ...(flow.status === 'failed' ? {message: publicFailure} : {})});
+    return json(res, {status: flow.status, ...(flow.status === 'failed' ? flow.failure || {message: publicFailure} : {})});
   }
   if (pathname === '/api/feishu-cli/qr' && req.method === 'GET') {
     const flow = authorizedFlow(req, params);
