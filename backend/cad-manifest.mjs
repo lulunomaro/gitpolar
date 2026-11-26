@@ -31,9 +31,20 @@ export function dependencyScope(data,manifest,path) {
   // Without an explicit dependency list, use the project as a conservative scope.
   return {entry,paths:source?.kind==='part'&&!entry?[path]:data.files.filter(nativeFile).map(f=>f.path),verified:false};
 }
-export function dependencyIdentity(data,manifest,path,includePreview=true) {
-  const scope=dependencyScope(data,manifest,path),files=new Map(data.files.map(f=>[f.path,f]));
-  const content=scope.paths.sort().map(p=>[p,files.get(p)?.oid||null]);
-  if(!files.has(path))return 'missing';
-  return createHash('sha256').update(JSON.stringify({content,...(includePreview?{configuration:scope.entry?.configuration||'',components:scope.entry?.components||null,preview:scope.entry?.previewOid||null}:{})})).digest('hex');
+const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
+export function dependencyState(data,manifest,path) {
+  const files=new Map(data.files.map(file=>[file.path,file.oid])), source=files.get(path);
+  if(!source)return {source:null,dependencies:null,preview:null,verified:false};
+  const scope=dependencyScope(data,manifest,path),entry=scope.entry;
+  const dependencies=digest(scope.paths.sort().map(name=>[name,files.get(name)]));
+  let preview=null;
+  if(entry){
+    // 每个实例按 ID 比较，其网格既有登记版本，也有本次提交中实际保存的版本。
+    const components=Array.isArray(entry.components)?entry.components.map(c=>[
+      c?.id,c?.name,c?.source,c?.configuration,c?.path,c?.previewOid,files.get(c?.path),c?.transform
+    ]).sort(([a],[b])=>a<b?-1:a>b?1:0):null;
+    preview=digest([entry.configuration,entry.path,entry.previewOid,files.get(entry.path),components,
+      entry.projectFingerprint,Boolean(scope.stale),scope.error]);
+  }
+  return {source,dependencies,preview,verified:scope.verified};
 }

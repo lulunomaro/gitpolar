@@ -212,17 +212,33 @@ namespace Gitpolar.SolidWorks {
       var selected=new HashSet<string>(Strings(values,"files"),StringComparer.Ordinal);foreach(string file in selected)SafePath(workspace,file);
       string source=ActivePath();if(!String.IsNullOrEmpty(source)&&!Inside(source,workspace))throw new InvalidOperationException("当前图纸不属于选定工作副本。");
       await SaveProject(workspace);
-      if(Flag(values,"preview")){
+      bool preview=Flag(values,"preview");
+      if(preview){
         if(String.IsNullOrEmpty(source)||!Inside(source,workspace)||!(source.EndsWith(".sldasm",StringComparison.OrdinalIgnoreCase)||source.EndsWith(".sldprt",StringComparison.OrdinalIgnoreCase)))throw new InvalidOperationException("请激活工作副本内的零件或装配体以生成预览。");
         // A preview fingerprint describes all saved CAD; committing only a subset would make it stale.
         var unselected=ChangedFiles(workspace).Where(f=>IsNative(Convert.ToString(f["path"]))&&!selected.Contains(Convert.ToString(f["path"]))).ToArray();if(unselected.Length>0)throw new InvalidOperationException("生成装配预览需要一起提交依赖图纸改动，请勾选："+String.Join("、",unselected.Take(6).Select(f=>Convert.ToString(f["path"]))));
         Progress("正在生成 SolidWorks 增量预览…");string script=Path.Combine(Path.GetDirectoryName(typeof(Addin).Assembly.Location),"tools","Export-SolidWorksProject.ps1");await Git.ProcessAsync("powershell.exe",workspace,new string[]{"-NoProfile","-ExecutionPolicy","Bypass","-File",script,"-RepoRoot",workspace,"-Source",source});
-        foreach(var file in ChangedFiles(workspace))if(Convert.ToString(file["path"]).StartsWith(".gitpolar/",StringComparison.Ordinal))selected.Add(Convert.ToString(file["path"]));
       }
-      var changes=ChangedFiles(workspace);foreach(var file in changes){if(selected.Contains(Convert.ToString(file["path"]))&&file.ContainsKey("previousPath"))selected.Add(Convert.ToString(file["previousPath"]));}
-      var changed=new HashSet<string>(changes.Select(f=>Convert.ToString(f["path"])),StringComparer.Ordinal);foreach(var file in changes)if(file.ContainsKey("previousPath"))changed.Add(Convert.ToString(file["previousPath"]));selected.IntersectWith(changed);
+      var changes=ChangedFiles(workspace);
+      var changed=new HashSet<string>(StringComparer.Ordinal);
+      var untracked=new List<string>();
+      foreach(var file in changes){
+        string path=Convert.ToString(file["path"]),status=Convert.ToString(file["status"]);
+        changed.Add(path);
+        if(preview&&path.StartsWith(".gitpolar/",StringComparison.Ordinal))selected.Add(path);
+        if(status.Contains("R")&&file.ContainsKey("previousPath")){
+          string oldPath=Convert.ToString(file["previousPath"]);changed.Add(oldPath);
+          if(selected.Contains(path))selected.Add(oldPath);
+        }
+        if(status=="??"&&selected.Contains(path))untracked.Add(path);
+      }
+      selected.IntersectWith(changed);
       if(selected.Count==0)throw new InvalidOperationException("所选文件没有可提交的改动。");
-      Progress("正在提交 CAD 与预览…");var add=new List<string>{"add","-A","--"};add.AddRange(selected);await Git.Async(workspace,add.ToArray());var args=new List<string>{"commit","--only","-m",message,"--"};args.AddRange(selected);await Git.Async(workspace,args.ToArray());string oid=Git.Run(workspace,"rev-parse","HEAD").Trim();Progress("本地提交完成："+oid.Substring(0,7));
+      Progress("正在提交 CAD 与预览…");
+      // --only 从工作树取所选内容。仅新文件需要先登记，已暂存的删除和重命名可直接提交。
+      if(untracked.Count>0)await Git.WithPathsAsync(workspace,untracked,"add","--intent-to-add");
+      await Git.WithPathsAsync(workspace,selected,"commit","--only","-m",message);
+      string oid=Git.Run(workspace,"rev-parse","HEAD").Trim();Progress("本地提交完成："+oid.Substring(0,7));
       if(Flag(values,"push")){try{await Push(workspace);}catch(Exception error){throw new InvalidOperationException("本地提交已完成（"+oid.Substring(0,7)+"），推送失败。可点击 Push 重试。\n"+error.Message);}}
       return new {oid=oid};
     }
@@ -269,6 +285,16 @@ namespace Gitpolar.SolidWorks {
     public static string Run(string directory,params string[] args){return ProcessAsync("git.exe",directory,args).GetAwaiter().GetResult();}
     public static string Try(string directory,params string[] args){try{return Run(directory,args);}catch{return "";}}
     public static Task<string> Async(string directory,params string[] args){return ProcessAsync("git.exe",directory,args);}
+    internal static async Task<string> WithPathsAsync(string directory,IEnumerable<string> paths,params string[] args){
+      // 大装配的图纸清单可能超过 Windows 命令行长度，按 Git 的 NUL 格式传递原始文件名。
+      string list=Path.GetTempFileName();
+      try{
+        File.WriteAllText(list,String.Join("\0",paths)+"\0",new UTF8Encoding(false));
+        var command=new List<string>{"--literal-pathspecs"};
+        command.AddRange(args);command.Add("--pathspec-from-file="+list);command.Add("--pathspec-file-nul");
+        return await Async(directory,command.ToArray()).ConfigureAwait(false);
+      }finally{File.Delete(list);}
+    }
     public static async Task<string> ProcessAsync(string executable,string directory,string[] args,bool skipSmudge=false){
       var start=new ProcessStartInfo(executable,String.Join(" ",args.Select(Quote))){WorkingDirectory=directory,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};start.EnvironmentVariables["GIT_TERMINAL_PROMPT"]="0";start.EnvironmentVariables["GIT_OPTIONAL_LOCKS"]="0";if(skipSmudge)start.EnvironmentVariables["GIT_LFS_SKIP_SMUDGE"]="1";
       using(var process=new Process(){StartInfo=start,EnableRaisingEvents=true}){var done=new TaskCompletionSource<int>();process.Exited+=(s,e)=>done.TrySetResult(process.ExitCode);process.Start();Task<string> output=process.StandardOutput.ReadToEndAsync(),errors=process.StandardError.ReadToEndAsync();await done.Task.ConfigureAwait(false);string result=await output.ConfigureAwait(false),error=await errors.ConfigureAwait(false);if(process.ExitCode!=0)throw new InvalidOperationException(error.Trim().Length>0?error.Trim():"命令执行失败："+executable);return result;}

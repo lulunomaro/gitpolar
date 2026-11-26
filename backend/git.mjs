@@ -113,7 +113,7 @@ export async function resolveRef(repo,ref='main') {
   fail(404,'Branch or tag not found.');
 }
 export async function commitInfo(repo,ref,path) {
-  const result=await git(repo.name,['log','-1','--format=%H%x00%an%x00%aI%x00%s',ref,...(path?['--',path]:[])]);
+  const result=await git(repo.name,['--literal-pathspecs','log','-1','--format=%H%x00%an%x00%aI%x00%s',ref,...(path?['--',path]:[])]);
   const [oid,author,date,message]=result.trimEnd().split('\0');
   return {hash:oid?.slice(0,7),oid,author,date,message};
 }

@@ -1,6 +1,6 @@
 import { git, filePath, resolveRef, commitInfo } from './git.mjs';
-import { snapshot } from './snapshot.mjs';
-import { readManifest,dependencyScope,dependencyIdentity,nativeFile } from './cad-manifest.mjs';
+import { cadTree,snapshot } from './snapshot.mjs';
+import { readManifest,dependencyScope,dependencyState,nativeFile } from './cad-manifest.mjs';
 import { previewInfo } from './preview.mjs';
 import { fail } from './auth.mjs';
 const supported=path=>/\.(sldasm|sldprt|step|stp|stl)$/i.test(path);
@@ -50,14 +50,24 @@ export async function dependencyHistory(repo,ref,path,cursor='0'){
   const oid=await resolveRef(repo,ref),skip=Number(cursor),scan=60,limit=25;
   const output=await git(repo.name,['log','--first-parent','-z','--format=%H%x00%an%x00%aI%x00%s%x00%P','--max-count='+String(scan+1),'--skip='+skip,oid]);
   const fields=output.split('\0');if(fields.at(-1)==='')fields.pop();const rows=[];for(let i=0;i+4<fields.length;i+=5)rows.push({oid:fields[i],author:fields[i+1],date:fields[i+2],message:fields[i+3],parent:fields[i+4].split(' ')[0]});
-  const cache=new Map(),load=id=>{if(!cache.has(id))cache.set(id,version(repo,id));return cache.get(id);};
+  // 历史由提交内的 Git 对象决定，不必为每个旧版本检查 NAS 当前的 LFS 存储。
+  async function state(id){
+    const data=await cadTree(repo,id);
+    return dependencyState(data,await readManifest(repo,data),path);
+  }
   const commits=[];let consumed=0,scope='explicit';
+  let current=rows.length?await state(rows[0].oid):null;
   for(const row of rows.slice(0,scan)){
-    const now=await load(row.oid),before=row.parent?await load(row.parent):null;consumed++;
-    const hasSource=now.data.files.some(f=>f.path===path),hadSource=before?.data.files.some(f=>f.path===path);
-    if(!hasSource&&!hadSource)continue;
-    const dep=dependencyScope(now.data,now.manifest,path);if(!dep.verified)scope='project-fallback';
-    if(!before||dependencyIdentity(now.data,now.manifest,path)!==dependencyIdentity(before.data,before.manifest,path)){const sourceSame=hasSource&&hadSource&&now.data.files.find(f=>f.path===path).oid===before.data.files.find(f=>f.path===path).oid;const dependenciesChanged=before&&dependencyIdentity(now.data,now.manifest,path,false)!==dependencyIdentity(before.data,before.manifest,path,false);commits.push({oid:row.oid,hash:row.oid.slice(0,7),author:row.author,date:row.date,message:row.message,exists:hasSource,dependencyOnly:Boolean(sourceSame&&dependenciesChanged),previewOnly:Boolean(sourceSame&&!dependenciesChanged)});}
+    const after=current,before=row.parent?await state(row.parent):null;
+    current=before;consumed++;
+    if(!after.source&&!before?.source)continue;
+    if(!after.verified)scope='project-fallback';
+    const sameSource=after.source===before?.source;
+    const dependenciesChanged=after.dependencies!==before?.dependencies;
+    if(!sameSource||dependenciesChanged||after.preview!==before?.preview){
+      commits.push({oid:row.oid,hash:row.oid.slice(0,7),author:row.author,date:row.date,message:row.message,
+        exists:Boolean(after.source),dependencyOnly:sameSource&&dependenciesChanged,previewOnly:sameSource&&!dependenciesChanged});
+    }
     if(commits.length===limit)break;
   }
   return {ref,oid,path,scope,commits,nextCursor:rows.length>consumed?String(skip+consumed):null};
