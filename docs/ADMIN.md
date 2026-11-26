@@ -14,6 +14,8 @@
 
 ## 飞书唯一登录
 
+主入口 `/login/` 使用飞书 CLI 设备授权，点击生成二维码后扫码即可。NAS 安装与配置、项管首次归属和正常成员操作见 [LOGIN.md](LOGIN.md)。以下应用凭证与回调为备用网页 OAuth 方式。
+
 在 NAS 环境和普通 node server.mjs 启动中，只允许飞书 OAuth。POST /api/setup、POST /api/login、GitHub 授权入口/回调均拒绝。正常部署也禁止通过管理接口创建本地密码账号或重设密码。旧本地会话在增加 sessions.provider 后标记 local，不能登录新版网页。新飞书会话标记 feishu。
 
 在 .env 配置：

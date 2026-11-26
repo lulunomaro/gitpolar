@@ -8,6 +8,7 @@
 | --- | --- |
 | 主站 | app.js / index.html / styles.css，GitHub 风格仓库、分支与历史；导航接管理和采购 |
 | NAS 管理 | admin/、backend/admin.mjs；管理员角色、用量、仓库状态、文件锁、诊断 |
+| 扫码登录 | login/、backend/feishu-cli.mjs；官方 CLI 设备授权、专属二维码、轮询、配置隔离 |
 | 飞书身份 | backend/feishu.mjs、auth.mjs、store.mjs；唯一网页登录、PKCE、稳定用户、会话 provider |
 | 采购业务 | procurement/app.js、backend/procurement.mjs；团队职责、申请状态机、库存与审计 |
 | STEP 标注 | procurement/viewer.js，基于已有 CAD worker 的 OCCT BRep 面编号 |
@@ -23,10 +24,10 @@ npm ci；npm run build:viewer；npm test；npm run package:nas。
 
 ## 当前交付与后续连接
 
-- 已实现 NAS 后台、采购审批与库存、STEP 孔壁人工螺纹标注、飞书唯一登录、仓库归属接口。
+- 已实现 NAS 后台、采购审批与库存、STEP 孔壁人工螺纹标注、飞书唯一登录和 CLI 扫码入口、仓库归属接口。首批源码快照为 46706e2，后续提交继续补齐扫码登录。
 - 需填入正式飞书应用凭证、允许名单、指定项管 open_id，以及真实仓库 Base/表 ID/字段映射，再与团队飞书做实网联调。已有 CLI 用户授权过期，不应把个人 CLI 缓存当成 NAS 的应用凭证。
 - 采购沿用独立附件和请求数据，尚未批量迁移旧 machining-hub 数据；未实现自动供应商报价、支付、分批收货或库存领用。
 - 原生 SolidWorks 插件未修改、未重装、未操作。仓库自动归属接口尚未接入插件事件。
-- 当前源码与 NAS 包已更新；旧 4317 服务没有被这次测试替换。上一轮停止旧服务的操作被自动审批拒绝，仅返回 blocked by policy。请在有权限的正常部署流程中重载服务，不能据本地测试认定旧进程已经更新。
+- 当前源码与 NAS 包已更新；旧 4317 服务没有被这次测试替换。停止旧服务及本轮另启 4318 新服务的操作均被自动审批拒绝，仅返回 blocked by policy。请在有权限的正常部署流程中重载服务，不能据本地测试认定旧进程已经更新。
 
 本次没有把真实 CAD 工程、采购附件、数据目录或密钥放入公开代码仓库；测试截图与 NAS ZIP 在本机 artifacts/，不提交 Git。

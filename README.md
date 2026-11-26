@@ -13,7 +13,7 @@ npm ci
 node server.mjs
 ```
 
-先配置飞书应用、允许加入的租户或账号，以及项管的 `FEISHU_ADMIN_OPEN_IDS`，再打开 `.env` 中的 `APP_ORIGIN` 地址，点击 **使用飞书登录**。成员通过飞书首次登录加入，项管在 **管理后台 → 用户** 和 **采购与库存 → 团队权限** 分配权限。`APP_ORIGIN` 必须填写团队实际使用的地址，例如 `http://192.168.1.20:4317`，不要在给队友使用时仍填写 `127.0.0.1`。
+已安装且配置飞书 CLI 时，直接打开 `.env` 中的 `APP_ORIGIN` 地址，点击 **使用飞书登录 → 生成飞书登录二维码**，用手机飞书扫码确认即可。NAS 首次配置和项管归属见 [扫码登录说明](docs/LOGIN.md)。成员通过飞书首次登录加入，项管在 **管理后台 → 用户** 和 **采购与库存 → 团队权限** 分配权限。`APP_ORIGIN` 必须填写团队实际使用的地址，例如 `http://192.168.1.20:4317`，不要在给队友使用时仍填写 `127.0.0.1`。
 
 完整工程 ZIP 使用固定版本的 yazl，三维预览使用本地 Three.js 和 OCCT WebAssembly 资源；本机首次启动前执行 `npm ci`。运行 `npm test` 会启动独立临时服务，并使用真实 Git / Git LFS 客户端执行集成测试，不会修改正式数据目录。
 
@@ -77,7 +77,11 @@ Git LFS 使用标准 Batch、Basic Transfer 和 Locking API。服务端验证上
 
 ## 飞书唯一登录
 
+**推荐使用 CLI 扫码登录**：打开 `/login/`，生成二维码、飞书扫码、自动返回原页面。Docker 已包含 CLI，配置保存在 NAS 数据卷中；普通成员不需要填写应用参数。详细操作见 [LOGIN.md](docs/LOGIN.md)。
+
 网页及 NAS 正常运行只允许飞书登录。GitHub 登录、本地密码登录和密码初始化接口均禁用；旧密码会话不能继续登录。Git 客户端使用飞书账号下生成的 gitpolar 访问令牌。
+
+如使用备用网页 OAuth：
 
 1. 配置自建飞书应用的 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`，回调设置为 `APP_ORIGIN/auth/feishu/callback`。
 2. 配置 `FEISHU_ALLOWED_TENANTS` 或 `FEISHU_ALLOWED_OPEN_IDS`；用 `FEISHU_ADMIN_OPEN_IDS` 指定项管的应用内 open_id。初次部署应先指定项管。

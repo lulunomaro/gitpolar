@@ -93,9 +93,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     return `<section class="live-welcome panel"><img class="site-logo" src="${GITPOLAR_LOGO}" width="64" height="64" alt=""><h1>${title}</h1><p>${backendError ? escape(backendError) : session?.setupRequired ? '初始化 NAS 工作区，创建第一个管理员账号。' : '登录后即可查看团队仓库、推送代码和管理 SolidWorks 图纸。'}</p><button class="button primary" data-action="live-login">${session?.authProvider==='feishu'?'使用飞书登录':session?.setupRequired ? 'Initialize gitpolar' : 'Sign in'}</button></section>`;
   }
   function localLogin() {
-    if(session?.authProvider==='feishu'){
-      openDialog('使用飞书登录 gitpolar',session.feishuLoginUrl?`<p class="dialog-note">使用队伍飞书账号登录，项管在后台分配仓库和采购权限。</p><div class="dialog-actions"><button class="button primary" type="button" data-action="feishu-login">使用飞书登录</button></div>`:`<p class="dialog-note">当前只允许飞书登录。请在 NAS 配置 FEISHU_APP_ID、FEISHU_APP_SECRET 和允许加入的飞书账号或租户。</p><p class="dialog-note">回调地址：<code>${escape(session.feishuCallbackUrl||'')}</code></p>`);return;
-    }
+    if(session?.authProvider==='feishu'){location.assign('/login/?returnTo='+encodeURIComponent(location.pathname+location.search+location.hash));return;}
     const setup = session?.setupRequired;
     openDialog(setup ? 'Initialize gitpolar' : 'Sign in to gitpolar',`<form id="local-login-form" data-setup="${Boolean(setup)}"><p class="dialog-note">${setup ? '首个账号拥有管理员权限。后续成员由管理员创建，或使用配置中允许的 GitHub / 飞书账号登录。' : '使用本地账号登录。Git 客户端使用账号下的访问令牌。'}</p><label class="field">Username<input name="username" autofocus required autocomplete="username" maxlength="48" pattern="[a-z0-9][a-z0-9_-]{0,47}"></label><label class="field">Password<input name="password" type="password" required minlength="10" autocomplete="${setup ? 'new-password' : 'current-password'}"></label><p class="field-error" id="login-error" role="alert" hidden></p><div class="dialog-actions">${session?.loginUrl ? '<button class="button" type="button" data-action="login">Sign in with GitHub</button>' : ''}${session?.feishuLoginUrl ? '<button class="button" type="button" data-action="feishu-login">使用飞书登录</button>' : ''}<button class="button primary" type="submit">${setup ? 'Create administrator' : 'Sign in'}</button></div></form>`);
   }
@@ -793,7 +791,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
   async function login() {
     await sessionReady;
-    if(session?.authProvider==='feishu'){if(session.feishuLoginUrl)location.assign(session.feishuLoginUrl);else localLogin();return;}
+    if(session?.authProvider==='feishu'){localLogin();return;}
     if (session?.loginUrl) { location.assign(session.loginUrl); return; }
     openDialog('Sign in with GitHub', session?.callbackUrl
       ? `<p class="dialog-note">请先在 GitHub 注册 OAuth App，并在服务端配置 Client ID 和 Client Secret。授权回调地址：</p><div class="copy-field"><input class="form-input" readonly aria-label="OAuth callback URL" value="${escape(session.callbackUrl)}"><button class="button" data-action="copy-value" aria-label="Copy callback URL">${icon('copy')}</button></div><p class="dialog-note setup-note">配置方法见项目目录中的 README.md。</p>`

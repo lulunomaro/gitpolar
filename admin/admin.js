@@ -103,7 +103,7 @@ function setAccount(user) {
 function gate(kind, note) {
   const messages = {
     signIn: state.strictFeishu
-      ? ['shield', '使用飞书登录 gitpolar', '首次使用飞书登录即可加入工作空间。访问管理后台需要项管权限。', '前往主站用飞书登录']
+      ? ['shield', '使用飞书登录 gitpolar', '首次使用飞书登录即可加入工作空间。访问管理后台需要项管权限。', '飞书扫码登录']
       : ['shield', '请登录 gitpolar', '使用管理员账号登录后，即可访问此后台。', '前往主站登录'],
     setup: ['server', '初始化 gitpolar', '请先在主站创建此实例的首个管理员账号。', '前往主站初始化'],
     denied: ['shield', '需要管理员权限', '当前账号可以访问主站。请联系工作空间管理员获取后台权限。', '返回主站'],
@@ -124,7 +124,7 @@ function gate(kind, note) {
   $('#toast').hidden = true;
   setAccount(kind === 'denied' ? state.session?.user : null);
   $('#gate-panel').innerHTML = `<div class="gate-symbol">${icon(symbol)}</div><h1 tabindex="-1">${title}</h1><p>${escape(note || fallback)}</p>
-    ${kind === 'offline' ? `<button type="button" class="button" id="retry-session">${icon('refresh')}${button}</button>` : `<a class="button primary" href="/">${button}${icon('arrow-right')}</a>`}`;
+    ${kind === 'offline' ? `<button type="button" class="button" id="retry-session">${icon('refresh')}${button}</button>` : `<a class="button primary" href="${kind==='signIn'||kind==='setup'?'/login/?returnTo=%2Fadmin%2F':'/'}">${button}${icon('arrow-right')}</a>`}`;
   document.title = `${title} · gitpolar`;
   $('#gate-panel h1').focus({preventScroll: true});
   $('#retry-session')?.addEventListener('click', start);

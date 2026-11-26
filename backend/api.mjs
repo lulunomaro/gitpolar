@@ -16,6 +16,7 @@ import { repositoryContext,resolveRepositoryContext } from './repository-context
 import { adminApi } from './admin.mjs';
 import { procurementApi } from './procurement.mjs';
 import { warehouseApi } from './feishu-warehouse.mjs';
+import { feishuCliApi } from './feishu-cli.mjs';
 import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
 
 function account(req,res,mutate=false) {
@@ -23,6 +24,7 @@ function account(req,res,mutate=false) {
   if(mutate&&!auth.token)requireOrigin(req);return auth.user;
 }
 export async function api(req,res,pathname,params,changed,events) {
+  if(pathname.startsWith('/api/feishu-cli/'))return feishuCliApi(req,res,pathname,params);
   if(pathname.startsWith('/api/procurement/feishu/'))return warehouseApi(req,res,pathname,params);
   if(pathname==='/api/procurement'||pathname.startsWith('/api/procurement/'))return procurementApi(req,res,pathname,params,changed);
   if(pathname==='/api/admin'||pathname.startsWith('/api/admin/'))return adminApi(req,res,pathname,params,changed);

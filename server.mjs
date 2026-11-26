@@ -15,9 +15,12 @@ const {api}=await import('./backend/api.mjs');
 const {beginOAuth,finishOAuth}=await import('./backend/oauth.mjs');
 const {beginFeishu,finishFeishu}=await import('./backend/feishu.mjs');
 const {startWarehouseSync}=await import('./backend/feishu-warehouse.mjs');
+const {shutdownFeishuCli}=await import('./backend/feishu-cli.mjs');
 const events=new EventEmitter();events.setMaxListeners(1000);
 const changed=name=>events.emit('repository',name);
 const assets=new Map([
+  ['/login',['login/index.html','text/html; charset=utf-8']],['/login/',['login/index.html','text/html; charset=utf-8']],
+  ['/login/app.js',['login/app.js','text/javascript; charset=utf-8']],['/login/styles.css',['login/styles.css','text/css; charset=utf-8']],
   ['/procurement',['procurement/index.html','text/html; charset=utf-8']],['/procurement/',['procurement/index.html','text/html; charset=utf-8']],
   ['/procurement/index.html',['procurement/index.html','text/html; charset=utf-8']],['/procurement/app.js',['procurement/app.js','text/javascript; charset=utf-8']],
   ['/procurement/styles.css',['procurement/styles.css','text/css; charset=utf-8']],['/procurement-viewer.js',['public/procurement-viewer.js','text/javascript; charset=utf-8']],
@@ -76,5 +79,6 @@ server.listen(port,host,()=>{
   console.log(`${version}; Smart HTTP + Git LFS enabled; workspace ${namespace}`);
 });
 const stopWarehouseSync=startWarehouseSync();
-function shutdown(){stopWarehouseSync?.();events.removeAllListeners();server.close(()=>process.exit(0));server.closeAllConnections();}
+let stopping=false;
+async function shutdown(){if(stopping)return;stopping=true;stopWarehouseSync?.();events.removeAllListeners();server.closeAllConnections();await shutdownFeishuCli();server.close(()=>process.exit(0));}
 process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);

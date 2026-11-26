@@ -11,6 +11,7 @@ const stateName = 'gitpolar_feishu_oauth', attempts = new Map();
 db.exec(`CREATE TABLE IF NOT EXISTS feishu_identities (
   open_id TEXT PRIMARY KEY, tenant_key TEXT NOT NULL, user_id INTEGER NOT NULL UNIQUE REFERENCES users(id), created_at TEXT NOT NULL
 )`);
+db.exec(`CREATE TABLE IF NOT EXISTS feishu_trusted_tenants (tenant_key TEXT PRIMARY KEY, created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL)`);
 export const hasFeishuIdentity = userId => Boolean(db.prepare('SELECT 1 FROM feishu_identities WHERE user_id=?').get(userId));
 const allowedValues = name => (process.env[name] || '').split(',').map(value=>value.trim()).filter(Boolean);
 
@@ -27,6 +28,33 @@ export function beginFeishu(req,res,params) {
     code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'});
   res.writeHead(302,{'Set-Cookie':setCookie(stateName,state,600),Location:authorize.href}).end();
 }
+
+// Browser OAuth and CLI device authorization enter the same stable identity and role policy.
+export function getOrCreateFeishuUser(profile,{bootstrapAdminIds=[]}={}) {
+  if(typeof profile?.open_id!=='string'||!profile.open_id||typeof profile.tenant_key!=='string'||!profile.tenant_key) fail(400,'Invalid verified Feishu identity.');
+  const tenants=allowedValues('FEISHU_ALLOWED_TENANTS'),members=allowedValues('FEISHU_ALLOWED_OPEN_IDS'),admins=allowedValues('FEISHU_ADMIN_OPEN_IDS');
+  const designated=admins.includes(profile.open_id),explicitPolicy=tenants.length>0||members.length>0||admins.length>0;
+  const adminExists=Boolean(db.prepare("SELECT 1 FROM users u JOIN feishu_identities f ON f.user_id=u.id WHERE u.role='admin' LIMIT 1").get());
+  // A dedicated NAS CLI's already configured operator can bootstrap the first Feishu manager.
+  // It must match the identity verified by this specific device flow, not a shared cached login afterwards.
+  const bootstrap=!explicitPolicy&&!adminExists&&bootstrapAdminIds.includes(profile.open_id);
+  const trustedTenant=!explicitPolicy&&Boolean(db.prepare('SELECT 1 FROM feishu_trusted_tenants WHERE tenant_key=?').get(profile.tenant_key));
+  let identity=db.prepare('SELECT user_id FROM feishu_identities WHERE open_id=? AND tenant_key=?').get(profile.open_id,profile.tenant_key);
+  if(!identity&&!designated&&!bootstrap&&!trustedTenant&&!tenants.includes(profile.tenant_key)&&!members.includes(profile.open_id))fail(403,'This Feishu identity is not allowed to join the workspace.');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if(!identity) {
+      const username='fs-'+createHash('sha256').update(profile.open_id).digest('hex').slice(0,20);
+      const result=db.prepare('INSERT INTO users(username,display_name,role,created_at) VALUES(?,?,?,?)').run(username,String(profile.name||'Feishu user').slice(0,100),designated||bootstrap||!userCount()?'admin':'writer',now());
+      identity={user_id:Number(result.lastInsertRowid)};
+      db.prepare('INSERT INTO feishu_identities(open_id,tenant_key,user_id,created_at) VALUES(?,?,?,?)').run(profile.open_id,profile.tenant_key,identity.user_id,now());
+    } else if(designated||bootstrap) db.prepare("UPDATE users SET role='admin' WHERE id=?").run(identity.user_id);
+    if(bootstrap)db.prepare('INSERT OR IGNORE INTO feishu_trusted_tenants(tenant_key,created_by,created_at) VALUES(?,?,?)').run(profile.tenant_key,identity.user_id,now());
+    db.exec('COMMIT');
+  } catch(error) {db.exec('ROLLBACK');throw error;}
+  return getUser(identity.user_id);
+}
+
 export async function finishFeishu(req,res,params) {
   const state = params.get('state');
   const attempt = state === cookie(req,stateName) && attempts.get(state);
@@ -57,19 +85,9 @@ export async function finishFeishu(req,res,params) {
       if (existing && existing.open_id !== profile.open_id) return redirect('identity-conflict');
       if (!identity) db.prepare('INSERT INTO feishu_identities(open_id,tenant_key,user_id,created_at) VALUES(?,?,?,?)').run(profile.open_id,profile.tenant_key,current.id,now());
       identity = {user_id:current.id};
-    } else if (!identity) {
-      const allowed = allowedValues('FEISHU_ALLOWED_TENANTS').includes(profile.tenant_key) || allowedValues('FEISHU_ALLOWED_OPEN_IDS').includes(profile.open_id);
-      const designatedAdmin = allowedValues('FEISHU_ADMIN_OPEN_IDS').includes(profile.open_id);
-      if (!allowed && !designatedAdmin) return redirect('not-allowed');
-      const username = 'fs-' + createHash('sha256').update(profile.open_id).digest('hex').slice(0,20);
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const role = designatedAdmin || !userCount() ? 'admin' : 'writer';
-        const created = db.prepare('INSERT INTO users(username,display_name,role,created_at) VALUES(?,?,?,?)').run(username,String(profile.name || 'Feishu user').slice(0,100),role,now());
-        identity = {user_id:Number(created.lastInsertRowid)};
-        db.prepare('INSERT INTO feishu_identities(open_id,tenant_key,user_id,created_at) VALUES(?,?,?,?)').run(profile.open_id,profile.tenant_key,identity.user_id,now());
-        db.exec('COMMIT');
-      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    } else {
+      try { identity={user_id:getOrCreateFeishuUser(profile).id}; }
+      catch(error) { if(error.status===403)return redirect('not-allowed');throw error; }
     }
     newSession(res,getUser(identity.user_id),'feishu');
     res.setHeader('Set-Cookie',[res.getHeader('Set-Cookie'),setCookie(stateName,'',0)]);

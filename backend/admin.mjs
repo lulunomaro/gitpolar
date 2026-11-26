@@ -6,6 +6,7 @@ import { requireAuth, body, json, fail, createUser, passwordHash } from './auth.
 import { git, branchOverview } from './git.mjs';
 import { releaseLock } from './lfs.mjs';
 import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
+import { feishuCliStatus } from './feishu-cli.mjs';
 
 const version = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version;
 const versions = Promise.all([
@@ -91,7 +92,7 @@ function revokeCredentials(id) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 async function overview(refresh) {
-  const [{storage}, [gitVersion, gitLfsVersion]] = await Promise.all([storageSnapshot(refresh), versions]);
+  const [{storage}, [gitVersion, gitLfsVersion],cliStatus] = await Promise.all([storageSnapshot(refresh), versions,feishuCliStatus()]);
   const counts = {
     users:count('SELECT count(*) AS n FROM users'),
     admins:count("SELECT count(*) AS n FROM users WHERE role='admin'"),
@@ -107,14 +108,14 @@ async function overview(refresh) {
   const diagnostics = [
     {id:'git', status:gitVersion ? 'ok' : 'warning', title:'Git Smart HTTP', detail:gitVersion || 'Git is unavailable.'},
     {id:'lfs', status:gitLfsVersion ? 'ok' : 'warning', title:'Git LFS', detail:gitLfsVersion || 'Install git-lfs in the NAS container.'},
-    {id:'oauth', status:feishuConfigured ? 'ok' : 'warning', title:'Feishu OAuth', detail:feishuConfigured ? 'Feishu-only login is configured.' : 'Configure FEISHU_APP_ID and FEISHU_APP_SECRET before signing in.'},
+    {id:'oauth', status:cliStatus.configured||feishuConfigured ? 'ok' : 'warning', title:'Feishu sign-in', detail:cliStatus.configured ? 'Feishu CLI QR sign-in is ready.' : feishuConfigured ? 'Feishu browser OAuth is configured.' : 'Initialize the NAS Feishu CLI application before signing in.'},
     {id:'repositories', status:counts.errorRepositories ? 'warning' : 'ok', title:'Repository creation', detail:counts.errorRepositories ? counts.errorRepositories + ' repository creation record(s) need inspection.' : 'No failed repository creation records.'},
     {id:'storage', status:storage.warnings.length ? 'warning' : 'ok', title:'Storage scan', detail:storage.warnings.length ? 'Storage usage is partial; see storage warnings.' : 'Git, LFS and SQLite usage scanned.'}
   ];
   return {
     service:{name:'gitpolar',version,nodeVersion:process.version,platform:process.platform,uptimeSeconds:Math.floor(process.uptime())},
     counts, storage,
-    deployment:{origin:origin.origin,namespace,dataRoot,repositoryRoot:repoRoot,lfsRoot,databasePath:dbPath,authProvider,githubConfigured:authProvider!=='feishu'&&githubConfigured,githubCallbackUrl:callbackUrl,feishuConfigured,feishuCallbackUrl,maxLfsBytes,maxPreviewBytes,gitVersion,gitLfsVersion},
+    deployment:{origin:origin.origin,namespace,dataRoot,repositoryRoot:repoRoot,lfsRoot,databasePath:dbPath,authProvider,githubConfigured:authProvider!=='feishu'&&githubConfigured,githubCallbackUrl:callbackUrl,feishuConfigured:feishuConfigured||cliStatus.configured,feishuCliConfigured:cliStatus.configured,feishuCliAvailable:cliStatus.available,feishuCallbackUrl,maxLfsBytes,maxPreviewBytes,gitVersion,gitLfsVersion},
     diagnostics
   };
 }

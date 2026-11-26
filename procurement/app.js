@@ -140,12 +140,8 @@ function authGate() {
   stopViews();
   meta = null; machine = null; baskets = null; request = null;
   $('#tabs').hidden = $('#admin-link').hidden = $('#identity').hidden = true;
-  const loginUrl = safeUrl(session?.feishuLoginUrl, true);
-  const callback = safeUrl(session?.feishuCallbackUrl, true) || new URL('/auth/feishu/callback', safeUrl(session?.origin) || location.origin).href;
-  const content = loginUrl
-    ? `<p>使用团队飞书账号进入采购工作区。</p><div class="actions">${btnLink(loginUrl, '使用飞书登录', null, true)}</div>`
-    : `<p>请在 NAS 配置 <code>FEISHU_APP_ID</code> 和 <code>FEISHU_APP_SECRET</code>，并在飞书应用中登记以下回调地址。</p><code class="callback-url">${esc(callback)}</code><button class="btn" data-do="boot">重新检查配置</button>`;
-  view.innerHTML = `<section class="gate">${icon('lock')}<h1>${loginUrl ? '登录采购工作区' : '需要配置飞书登录'}</h1>${content}</section>`;
+  const loginUrl='/login/?returnTo='+encodeURIComponent(location.pathname+location.search+location.hash);
+  view.innerHTML = `<section class="gate">${icon('lock')}<h1>使用飞书登录采购工作区</h1><p>点击生成二维码，用飞书扫码确认后自动进入。</p><div class="actions">${btnLink(loginUrl,'飞书扫码登录',null,true)}</div></section>`;
   view.setAttribute('aria-busy', 'false');
 }
 async function boot() {

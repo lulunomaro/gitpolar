@@ -91,3 +91,6 @@ GET /api/repos/:name/history?ref=REF&path=SOURCE&scope=dependencies&cursor=0
 ## NAS 管理、采购与飞书
 
 详见 [管理后台与飞书唯一登录](ADMIN.md) 和 [采购、发加工与库存接口](PROCUREMENT.md)。`GET /api/session` 返回 `authProvider: "feishu"`、`feishuLoginUrl`、`feishuCallbackUrl`、`feishuLinked` 及 admin/procurement/repositoryContext 能力标记。网页登录使用飞书签发的会话；Git/LFS 继续使用该账号的访问令牌。
+
+
+扫码主入口为 `/login/`，设备授权接口位于 `/api/feishu-cli/`；状态、二维码、轮询和取消约定见 [LOGIN.md](LOGIN.md)。浏览器的流程 Cookie 与登录会话均为 HttpOnly。

@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { ZipFile } from 'yazl';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const output=resolve(process.argv[2]||resolve(root,'artifacts','gitpolar-nas.zip'));
-const roots=['index.html','styles.css','app.js','demo.js','live.js','server.mjs','package.json','package-lock.json','README.md','THIRD_PARTY_NOTICES.md','Dockerfile','compose.yaml','.env.example','.gitattributes','.gitignore','.dockerignore','admin','procurement','backend','docs','templates','assets','viewer','public','tools','scripts','tests','solidworks-addin'];
+const roots=['index.html','styles.css','app.js','demo.js','live.js','server.mjs','package.json','package-lock.json','README.md','THIRD_PARTY_NOTICES.md','Dockerfile','compose.yaml','.env.example','.gitattributes','.gitignore','.dockerignore','admin','login','procurement','backend','docs','templates','assets','viewer','public','tools','scripts','tests','solidworks-addin'];
 const files=[];
 async function collect(path){
   if(/^solidworks-addin\/(?:bin|bin-native[^/]*)$/.test(path)||path==='solidworks-addin/vendor')return;

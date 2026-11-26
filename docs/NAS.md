@@ -40,7 +40,7 @@ docker compose logs --tail=100 gitpolar
 
 也可把目录作为 Synology Container Manager / 其他 NAS 容器工具的 Compose 项目导入。镜像基于官方 `node:24-bookworm-slim`，安装 Git 和 Git LFS；构建时需要下载基础镜像、Debian 软件包和 package-lock.json 固定的 npm 依赖。
 
-启动前在 `.env` 填写飞书应用凭证、允许加入的租户/用户、指定项管 `FEISHU_ADMIN_OPEN_IDS`，并配置回调 `APP_ORIGIN/auth/feishu/callback`。浏览器打开 `APP_ORIGIN`，使用飞书登录；项管从 `/admin/` 管理成员角色和 NAS 状态，从 `/procurement/#permissions` 分配采购职责。成员自行生成 Git 访问令牌。请先使用一个小型仓库完成 clone / push，再迁入正式项目。
+先按 [扫码登录说明](LOGIN.md) 配置 NAS 的专用飞书 CLI 应用；已有配置无需重复初始化。浏览器打开 `APP_ORIGIN/login/`，点击生成二维码并用飞书确认。也可显式配置允许租户/用户与 `FEISHU_ADMIN_OPEN_IDS`；项管从 `/admin/` 管理成员角色和 NAS 状态，从 `/procurement/#permissions` 分配采购职责。成员自行生成 Git 访问令牌。请先使用一个小型仓库完成 clone / push，再迁入正式项目。
 
 ## 3. NAS 反向代理
 
@@ -98,6 +98,8 @@ data/
   lfs/
     REPOSITORY_ID/aa/bb/SHA256
   procurement/files/      采购与发加工 STEP/DWG 原始附件
+  lark-cli/               NAS 专用飞书 CLI 应用与授权配置（敏感，需备份）
+  lark-cli-login/         本机网页登录的隔离 CLI 配置（如未显式指定目录）
   tmp/                    网页提交使用的临时 index
 ```
 
@@ -126,4 +128,4 @@ docker compose start
 
 ## 0.7.0 管理与采购
 
-网页登录只允许飞书；升级旧本地账号部署前，先配置飞书应用和项管 open_id。管理及账号说明见 [ADMIN.md](ADMIN.md)，采购/库存和飞书字段配置见 [PROCUREMENT.md](PROCUREMENT.md)。采购表自动加入 SQLite，附件在同一 DATA_DIR 中，备份时一起保留。未填写真实飞书仓库配置时，本地审批与入库仍持久化，外部同步显示待配置。
+网页登录只允许飞书；使用 CLI 扫码主入口或配置备用网页 OAuth。升级旧本地账号部署前，确认已有 CLI 操作者或已指定飞书项管。管理及账号说明见 [ADMIN.md](ADMIN.md)，采购/库存和飞书字段配置见 [PROCUREMENT.md](PROCUREMENT.md)。采购表自动加入 SQLite，附件在同一 DATA_DIR 中，备份时一起保留。未填写真实飞书仓库配置时，本地审批与入库仍持久化，外部同步显示待配置。
