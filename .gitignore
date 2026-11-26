@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+data/
+node_modules/
+solidworks-addin/bin/
+solidworks-addin/vendor/*.dll
+solidworks-addin/bin-native/
+artifacts/
+solidworks-addin/bin-native*/
+assets/gitpolar-original.png

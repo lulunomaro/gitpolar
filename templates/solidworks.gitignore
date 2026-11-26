@@ -1,0 +1,4 @@
+# SolidWorks temporary/lock files. Commit the actual documents and relative folders.
+~$*
+*.swp
+*.swo

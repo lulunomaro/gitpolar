@@ -1,0 +1,145 @@
+import { randomUUID } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { extname } from 'node:path';
+import { db,getUser,userCount,repository,now } from './store.mjs';
+import { namespace,origin,callbackUrl,githubConfigured,cookieName,sessionSeconds } from './config.mjs';
+import { authenticate,requireAuth,requireOrigin,body,json,fail,createUser,checkPassword,newSession,newToken,cookie,hash,setCookie } from './auth.mjs';
+import { createRepository,describe,browse,fileContent,resolveRef,commitFiles,streamGit,fileIndex,fileMeta,history,tree,branchOverview,createBranch,deleteBranch } from './git.mjs';
+import { objectPath,lockList,createLock,releaseLock } from './lfs.mjs';
+import { downloadArchive } from './archive.mjs';
+import { cadProject } from './snapshot.mjs';
+import { previewInfo } from './preview.mjs';
+import { compareVersions,dependencyHistory } from './compare.mjs';
+import { commitGraph,graphCommit } from './graph.mjs';
+
+function account(req,res,mutate=false) {
+  const auth=authenticate(req);if(!auth)fail(401,'Sign in or use a gitpolar access token.');
+  if(mutate&&!auth.token)requireOrigin(req);return auth.user;
+}
+export async function api(req,res,pathname,params,changed,events) {
+  if(pathname==='/api/health')return json(res,{ok:true,service:'gitpolar',storage:'git+sqlite+lfs'});
+  if(pathname==='/api/session' && req.method==='GET') {
+    const auth=authenticate(req);
+    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,setupRequired:!userCount(),callbackUrl,loginUrl:githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{git:true,lfs:true,locks:true,cad:true,preview:true,hydratedArchives:true,history:true,ssh:false,issues:true,pulls:false}});
+  }
+  if(pathname==='/api/setup' && req.method==='POST') {
+    requireOrigin(req);const user=await createUser(await body(req),true);newSession(res,user);return json(res,{user},201);
+  }
+  if(pathname==='/api/login' && req.method==='POST') {
+    requireOrigin(req);const values=await body(req);
+    const record=typeof values.username==='string'&&db.prepare('SELECT * FROM users WHERE username=?').get(values.username);
+    if(!record||!await checkPassword(values.password,record.password_hash))fail(401,'Incorrect username or password.');
+    const user=getUser(record.id);newSession(res,user);return json(res,{user});
+  }
+  if(pathname==='/api/logout' && req.method==='POST') {
+    account(req,res,true);const secret=cookie(req,cookieName);if(secret)db.prepare('DELETE FROM sessions WHERE hash=?').run(hash(secret));
+    res.writeHead(204,{'Set-Cookie':setCookie(cookieName,'',0)}).end();return;
+  }
+  if(pathname==='/api/users') {
+    requireAuth(req,res,req.method!=='GET',true);
+    if(req.method==='GET')return json(res,{users:db.prepare('SELECT id,username,display_name AS name,role,created_at,github_id FROM users ORDER BY id').all()});
+    if(req.method==='POST')return json(res,{user:await createUser(await body(req))},201);
+  }
+  if(pathname==='/api/tokens') {
+    const user=account(req,res,req.method!=='GET');
+    if(req.method==='GET')return json(res,{tokens:db.prepare('SELECT id,name,created_at,last_used FROM tokens WHERE user_id=? ORDER BY created_at DESC').all(user.id)});
+    if(req.method==='POST')return json(res,newToken(user.id,(await body(req)).name),201);
+  }
+  const tokenMatch=pathname.match(/^\/api\/tokens\/([a-f0-9]+)$/);
+  if(tokenMatch&&req.method==='DELETE') {
+    const user=account(req,res,true);db.prepare('DELETE FROM tokens WHERE id=? AND user_id=?').run(tokenMatch[1],user.id);res.writeHead(204).end();return;
+  }
+  if(pathname==='/api/events' && req.method==='GET') {
+    account(req,res);res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive','X-Accel-Buffering':'no'});res.write(': connected\n\n');req.socket.setTimeout(0);
+    const listener=name=>res.write(`event: repository\ndata: ${JSON.stringify({name})}\n\n`);
+    events.on('repository',listener);const keepAlive=setInterval(()=>res.write(': keepalive\n\n'),25000);
+    res.on('close',()=>{events.off('repository',listener);clearInterval(keepAlive);});return;
+  }
+  if(pathname==='/api/repos') {
+    const user=requireAuth(req,res,req.method!=='GET');
+    if(req.method==='GET') {
+      const repos=db.prepare("SELECT * FROM repos WHERE status='ready' ORDER BY created_at DESC").all(),result=[];
+      for(let i=0;i<repos.length;i+=4)result.push(...await Promise.all(repos.slice(i,i+4).map(r=>describe(r,user.id))));
+      return json(res,{repos:result.sort((a,b)=>b.updated.localeCompare(a.updated))});
+    }
+    if(req.method==='POST') {const repo=await createRepository(user,await body(req));changed(repo.name);return json(res,await describe(repo,user.id),201);}
+  }
+  if(pathname==='/api/issues' && req.method==='GET') {
+    account(req,res);return json(res,{issues:db.prepare("SELECT i.number AS id,r.name AS repo,'issues' AS kind,i.title,i.body,i.state,u.username AS author,i.created_at AS updated FROM issues i JOIN repos r ON r.id=i.repo_id JOIN users u ON u.id=i.author_id WHERE r.status='ready' ORDER BY i.created_at DESC").all()});
+  }
+  const match=pathname.match(/^\/api\/repos\/([a-z0-9][a-z0-9_-]{0,47})(?:\/(.*))?$/);
+  if(match) {
+    const user=requireAuth(req,res,!['GET','HEAD'].includes(req.method));
+    const repo=repository(match[1]);if(!repo)fail(404,'Repository not found.');
+    const action=match[2]||'',ref=params.get('ref')||'main',path=params.get('path')||'';
+    if(!action && req.method==='GET')return json(res,await describe(repo,user.id));
+    if(!action && req.method==='PATCH') {
+      const value=await body(req);if(typeof value.description!=='string'||value.description.length>240)fail(400,'Invalid repository description.');
+      db.prepare('UPDATE repos SET description=? WHERE id=?').run(value.description,repo.id);changed(repo.name);return json(res,{ok:true});
+    }
+    if(action==='branches' && req.method==='GET')return json(res,await branchOverview(repo));
+    if(action==='branches' && req.method==='POST') {
+      const values=await body(req),branch=await createBranch(repo,values.name,values.from);
+      changed(repo.name);return json(res,branch,201);
+    }
+    if(action==='branches' && req.method==='DELETE') {
+      const values=await body(req);await deleteBranch(repo,values.name,values.expectedOid);
+      changed(repo.name);return json(res,{ok:true});
+    }
+    if(action==='tree' && req.method==='GET') {
+      const oid=await resolveRef(repo,ref);return json(res,{ref,oid,path,entries:await tree(repo,oid,path)});
+    }
+    if(action==='graph' && req.method==='GET')return json(res,await commitGraph(repo,params));
+    if(action==='commit' && req.method==='GET')return json(res,await graphCommit(repo,params.get('ref')||ref));
+    if(action==='history' && req.method==='GET')return json(res,await (params.get('scope')==='dependencies' && path ? dependencyHistory(repo,ref,path,params.get('cursor')||'0') : history(repo,ref,path,params.get('cursor')||'0')));
+    if(action==='compare' && req.method==='GET')return json(res,await compareVersions(repo,params.get('base'),params.get('head')||ref,path));
+    if(action==='preview' && req.method==='GET')return json(res,await previewInfo(repo,ref,path));
+    if(action==='cad' && req.method==='GET')return json(res,await cadProject(repo,ref));
+    if(action==='files' && req.method==='GET')return json(res,{files:await fileIndex(repo,ref)});
+    if(action==='browse' && req.method==='GET')return json(res,await browse(repo,ref,path));
+    if(action==='raw' && req.method==='GET') {
+      const file=await fileContent(repo,ref,path);
+      if(file.lfs) {
+        if(!file.lfsAvailable)fail(404,'LFS content is missing.');
+        const target=objectPath(repo,file.lfsOid),info=await stat(target);
+        res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':info.size,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`});
+        createReadStream(target).pipe(res);return;
+      }
+      const types={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.txt':'text/plain; charset=utf-8','.md':'text/plain; charset=utf-8'};
+      return streamGit(repo,['cat-file','blob',file.oid],res,types[extname(path).toLowerCase()]||'application/octet-stream',params.has('download')?file.name:undefined);
+    }
+    if(action==='archive' && req.method==='GET') {
+      return downloadArchive(repo,ref,res);
+    }
+    if(action==='file' && req.method==='PUT') {
+      const values=await body(req);if(typeof values.branch!=='string')fail(400,'Branch is required.');
+      const oid=await commitFiles(repo,user,values.branch,[{path:values.path,text:values.text}],String(values.message||`Update ${values.path}`).slice(0,300),values.expectedHead);changed(repo.name);return json(res,{oid});
+    }
+    if(action==='issues' && req.method==='POST') {
+      const values=await body(req);if(typeof values.title!=='string'||!values.title.trim()||values.title.length>160||typeof values.body!=='string'||values.body.length>6000)fail(400,'Invalid issue title or description.');
+      const number=db.prepare('SELECT coalesce(max(number),0)+1 AS n FROM issues WHERE repo_id=?').get(repo.id).n;
+      db.prepare('INSERT INTO issues(number,repo_id,author_id,title,body,created_at) VALUES(?,?,?,?,?,?)').run(number,repo.id,user.id,values.title.trim(),values.body,now());changed(repo.name);return json(res,{number},201);
+    }
+    if(action==='locks' && req.method==='POST') {
+      const values=await body(req);
+      await fileMeta(repo,values.ref||ref,values.path);
+      const result=createLock(repo,user,values.path);
+      if(!result.created)fail(409,'This file is already locked by '+result.lock.username+'.');
+      changed(repo.name);return json(res,{lock:{id:result.lock.id,path:result.lock.path,owner:result.lock.username,locked_at:result.lock.locked_at}},201);
+    }
+    const unlock=action.match(/^locks\/([a-f0-9-]+)\/unlock$/);
+    if(unlock && req.method==='POST') {
+      const values=await body(req),lock=releaseLock(repo,user,unlock[1],values.force);
+      changed(repo.name);return json(res,{lock:{id:lock.id,path:lock.path,owner:lock.username,locked_at:lock.locked_at}});
+    }
+    if(action==='locks' && req.method==='GET')return json(res,{locks:lockList(repo,{}).map(l=>({id:l.id,path:l.path,owner:l.username,locked_at:l.locked_at}))});
+    if(action==='preferences' && req.method==='POST') {
+      const values=await body(req);if(!['star','watch'].includes(values.kind))fail(400,'Invalid preference.');
+      if(values.enabled)db.prepare('INSERT OR IGNORE INTO preferences(user_id,repo_id,kind) VALUES(?,?,?)').run(user.id,repo.id,values.kind);else db.prepare('DELETE FROM preferences WHERE user_id=? AND repo_id=? AND kind=?').run(user.id,repo.id,values.kind);
+      return json(res,{ok:true});
+    }
+  }
+  fail(404,'API route not found.');
+}
+

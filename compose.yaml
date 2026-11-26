@@ -1,0 +1,25 @@
+name: gitpolar
+services:
+  gitpolar:
+    build: .
+    image: gitpolar:local
+    restart: unless-stopped
+    user: "${GITPOLAR_UID:-1000}:${GITPOLAR_GID:-1000}"
+    ports:
+      - "${BIND_IP:-0.0.0.0}:${PORT:-4317}:4317"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4317
+      APP_ORIGIN: ${APP_ORIGIN:-http://127.0.0.1:4317}
+      DATA_DIR: /data
+      WORKSPACE_NAME: ${WORKSPACE_NAME:-polar-lab}
+      PREVIEW_MAX_BYTES: ${PREVIEW_MAX_BYTES:-134217728}
+      LFS_MAX_BYTES: ${LFS_MAX_BYTES:-21474836480}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_ALLOWED_USERS: ${GITHUB_ALLOWED_USERS:-}
+    volumes:
+      - type: bind
+        source: ${NAS_DATA_DIR:-./data}
+        target: /data
+    stop_grace_period: 30s

@@ -1,0 +1,26 @@
+{
+  "name": "gitpolar",
+  "version": "0.6.5",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test --test-concurrency=1 tests/integration.test.mjs tests/compare-navigation.test.mjs tests/graph.test.mjs",
+    "build:viewer": "node scripts/build-viewer.mjs",
+    "package:nas": "node scripts/package-nas.mjs",
+    "build:solidworks": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File solidworks-addin/Build.ps1",
+    "package:solidworks": "node scripts/package-solidworks.mjs"
+  },
+  "dependencies": {
+    "occt-import-js": "0.0.23",
+    "three": "0.187.0",
+    "yazl": "3.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

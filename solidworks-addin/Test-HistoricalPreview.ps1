@@ -1,0 +1,16 @@
+﻿[CmdletBinding()]
+param([string]$Workspace,[string]$Oid,[string]$Path,[string]$Image,[string]$AssemblyDirectory)
+$ErrorActionPreference='Stop'
+if(-not $AssemblyDirectory){$AssemblyDirectory=Join-Path $PSScriptRoot 'bin-native'}
+$refs=@('System.dll','System.Core.dll','System.Windows.Forms.dll','System.Drawing.dll')
+foreach($name in @('SolidWorks.Interop.sldworks.dll','SolidWorks.Interop.swpublished.dll','Gitpolar.SolidWorks.dll')){$file=Join-Path $AssemblyDirectory $name;[void][Reflection.Assembly]::LoadFrom($file);$refs+=$file}
+Add-Type -ReferencedAssemblies $refs -TypeDefinition @'
+using System;using System.IO;using System.Linq;using System.Collections.Generic;using System.Drawing;using System.Windows.Forms;using Gitpolar.SolidWorks;using SolidWorks.Interop.sldworks;
+public static class PreviewVerification {
+ sealed class Host:Form {public Host(){Opacity=0;ShowInTaskbar=false;}protected override bool ShowWithoutActivation{get{return true;}}}
+ static string[] Documents(ISldWorks app){var values=new List<string>();for(var doc=(IModelDoc2)app.GetFirstDocument();doc!=null;doc=(IModelDoc2)doc.GetNext())values.Add(doc.GetPathName()+"|"+doc.GetSaveFlag());return values.OrderBy(v=>v,StringComparer.OrdinalIgnoreCase).ToArray();}
+ public static object Run(object instance,string workspace,string oid,string path,string output){var app=(ISldWorks)instance;var controller=new GitpolarPane(app);controller.Settings.Workspace=workspace;Exception failure=null;string before=controller.ActivePath();var documents=Documents(app);int appearance=app.GetUserPreferenceIntegerValue(305),background=app.GetUserPreferenceIntegerValue(99),external=app.GetUserPreferenceIntegerValue(82);string note="";bool saved=false;using(var host=new Host()){host.Shown+=(s,e)=>{controller.AttachDispatcher(host);controller.StartUi(async()=>{try{using(var image=await controller.Thumbnail(workspace,oid,path)){image.Save(output,System.Drawing.Imaging.ImageFormat.Png);note=Convert.ToString(image.Tag);saved=true;}}catch(Exception error){failure=error;}finally{controller.Stop();host.Close();}});};Application.Run(host);}if(failure!=null)throw failure;bool preserved=documents.SequenceEqual(Documents(app))&&appearance==app.GetUserPreferenceIntegerValue(305)&&background==app.GetUserPreferenceIntegerValue(99)&&external==app.GetUserPreferenceIntegerValue(82);if(!preserved)throw new Exception("Preview changed open documents, saved state, or background preferences.");double visible=0;using(var bitmap=new Bitmap(output)){var color=bitmap.GetPixel(0,0);int count=0,total=0;for(int y=0;y<bitmap.Height;y+=4)for(int x=0;x<bitmap.Width;x+=4){total++;var pixel=bitmap.GetPixel(x,y);if(Math.Abs(pixel.R-color.R)+Math.Abs(pixel.G-color.G)+Math.Abs(pixel.B-color.B)>15)count++;}visible=(double)count/total;if(visible<.05)throw new Exception("Rendered CAD is nearly invisible.");}return new {ok=saved,documentsAndPreferencesPreserved=preserved,visibleFraction=visible,note=note,activeBefore=before,activeAfter=app.IActiveDoc2==null?"":app.IActiveDoc2.GetPathName(),image=output};}
+}
+'@
+$sw=[Runtime.InteropServices.Marshal]::GetActiveObject('SldWorks.Application')
+[PreviewVerification]::Run($sw,$Workspace,$Oid,$Path,$Image)|ConvertTo-Json -Compress
