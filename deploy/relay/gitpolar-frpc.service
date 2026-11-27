@@ -1,0 +1,14 @@
+[Unit]
+Description=Gitpolar LAN relay client (frpc)
+Wants=network-online.target
+After=network-online.target nginx.service
+
+[Service]
+User=polarserver
+Group=polarserver
+ExecStart=/usr/local/bin/gitpolar-frpc -c /etc/gitpolar/frpc.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

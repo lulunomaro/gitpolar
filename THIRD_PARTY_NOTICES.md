@@ -1,3 +1,7 @@
+# Feishu sign-in artwork
+
+The Feishu button icon and the static frame of the sign-in illustration come from [Feishu’s official sign-in page](https://accounts.feishu.cn/accounts/page/login).
+
 # Octicons
 
 Source: https://github.com/primer/octicons

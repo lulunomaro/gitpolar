@@ -1,7 +1,8 @@
 import { randomBytes, createHash, scrypt as derive, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { db, getUser, userCount, now } from './store.mjs';
-import { origin, cookieName, sessionSeconds, authProvider } from './config.mjs';
+import { cookieName, sessionSeconds, authProvider, personalWorkspacesEnabled } from './config.mjs';
+import { requestOrigin } from './request-origin.mjs';
 export const hash = text => createHash('sha256').update(text).digest('hex');
 export const random = () => randomBytes(32).toString('base64url');
 const scrypt = promisify(derive);
@@ -10,7 +11,7 @@ export class HttpError extends Error {
 }
 export const fail = (status, message) => { throw new HttpError(status, message); };
 export const cookie = (req, key) => req.headers.cookie?.split(';').map(s=>s.trim()).find(s=>s.startsWith(`${key}=`))?.slice(key.length+1);
-export const setCookie = (key, value, seconds) => `${key}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${seconds}${origin.protocol === 'https:' ? '; Secure' : ''}`;
+export const setCookie = (key, value, seconds) => `${key}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${seconds}${requestOrigin().protocol === 'https:' ? '; Secure' : ''}`;
 export async function passwordHash(password) {
   if (typeof password !== 'string' || password.length < 10 || password.length > 1024) fail(400, 'Password must contain 10 to 1024 characters.');
   const salt = randomBytes(16).toString('hex');
@@ -35,17 +36,18 @@ export async function createUser({ username, password, role = 'writer', name = '
   return getUser(Number(result.lastInsertRowid));
 }
 export function newSession(res, user, provider = 'local', secret = random()) {
+  if (provider === 'feishu' && user.personalOnly) provider = 'feishu-personal';
   db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());
   db.prepare('INSERT INTO sessions(hash,user_id,expires,provider) VALUES(?,?,?,?)').run(hash(secret),user.id,Date.now()+sessionSeconds*1000,provider);
   res.setHeader('Set-Cookie',setCookie(cookieName,secret,sessionSeconds));
 }
 export function redeliverFeishuSession(req, res, userId, secret) {
-  const session = db.prepare("SELECT expires FROM sessions WHERE hash=? AND user_id=? AND provider='feishu' AND expires>?").get(hash(secret), userId, Date.now());
+  const session = db.prepare("SELECT expires FROM sessions WHERE hash=? AND user_id=? AND provider IN ('feishu','feishu-personal') AND expires>?").get(hash(secret), userId, Date.now());
   if (!session) return false;
   if (cookie(req, cookieName) !== secret) res.setHeader('Set-Cookie', setCookie(cookieName, secret, Math.ceil((session.expires-Date.now())/1000)));
   return true;
 }
-export function authenticate(req) {
+export function authenticate(req, {includePersonal = false} = {}) {
   const authorization = req.headers.authorization || '';
   let token, username;
   if (authorization.startsWith('Bearer ')) token = authorization.slice(7);
@@ -65,6 +67,11 @@ export function authenticate(req) {
   const secret = cookie(req,cookieName);
   if (secret) {
     const record = db.prepare('SELECT user_id,provider FROM sessions WHERE hash=? AND expires>?').get(hash(secret),Date.now());
+    if (record?.provider === 'feishu-personal') {
+      if (!includePersonal || !personalWorkspacesEnabled) return null;
+      const user = getUser(record.user_id);
+      return user ? {user: {...user, personalOnly: true}, token: false} : null;
+    }
     if (record && (authProvider !== 'feishu' || record.provider === 'feishu')) return { user:getUser(record.user_id),token:false };
   }
   return null;
@@ -74,10 +81,10 @@ export function requireAuth(req, res, write = false, admin = false, git = false)
   if (!auth || (git && !auth.token)) { if (git) res.setHeader('WWW-Authenticate','Basic realm="gitpolar", charset="UTF-8"'); fail(401,git?'Use a gitpolar access token for Git and LFS.':'Sign in or use a gitpolar access token.'); }
   if (write && auth.user.role === 'reader') fail(403,'This account has read-only access.');
   if (admin && auth.user.role !== 'admin') fail(403,'Administrator access is required.');
-  if (write && !git && !auth.token && req.headers.origin !== origin.origin) fail(403,'The request origin does not match APP_ORIGIN.');
+  if (write && !git && !auth.token && req.headers.origin !== requestOrigin().origin) fail(403,'The request origin does not match APP_ORIGIN.');
   return auth.user;
 }
-export function requireOrigin(req) { if (req.headers.origin !== origin.origin) fail(403,'The request origin does not match APP_ORIGIN.'); }
+export function requireOrigin(req) { if (req.headers.origin !== requestOrigin().origin) fail(403,'The request origin does not match APP_ORIGIN.'); }
 export async function body(req, max = 512 * 1024) {
   let size = 0; const chunks = [];
   for await (const chunk of req) { size += chunk.length; if (size > max) fail(413,'Request body is too large.'); chunks.push(chunk); }

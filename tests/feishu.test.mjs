@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {access,mkdtemp,writeFile} from 'node:fs/promises';
+import {access,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
@@ -45,12 +45,71 @@ async function request(server,path,{cookie,body,method='GET',redirect='manual',h
   const text=await response.text();let value;try{value=JSON.parse(text);}catch{value=text;}return{status:response.status,value,cookie:response.headers.get('set-cookie')?.split(';')[0],location:response.headers.get('location')};
 }
 const configured={FEISHU_APP_ID:'test-feishu-app',FEISHU_APP_SECRET:'test-feishu-private-secret',FEISHU_ALLOWED_TENANTS:'team-tenant',FEISHU_WAREHOUSE_BASE_TOKEN:'base',FEISHU_WAREHOUSE_TABLE_ID:'ledger',FEISHU_INVENTORY_TABLE_ID:'inventory'};
-async function loginOAuth(server,code,sessionCookie,link=false){
-  const begin=await request(server,'/auth/feishu'+(link?'?link=1':''),{cookie:sessionCookie});assert.equal(begin.status,302);
+async function loginOAuth(server,code,sessionCookie,link=false,returnTo){
+  const params = new URLSearchParams();
+  if (link) params.set('link','1');
+  if (returnTo) params.set('returnTo',returnTo);
+  const begin=await request(server,'/auth/feishu?'+params,{cookie:sessionCookie});assert.equal(begin.status,302);
   const target=new URL(begin.location);assert.equal(target.origin,'https://accounts.feishu.cn');assert.equal(target.searchParams.get('code_challenge_method'),'S256');
+  assert.equal(target.searchParams.get('prompt'),'consent');
   const state=target.searchParams.get('state'),cookie=[begin.cookie,sessionCookie].filter(Boolean).join('; ');
   const end=await request(server,'/auth/feishu/callback?'+new URLSearchParams({code,state}),{cookie});return{...end,state,oauthCookie:cookie};
 }
+
+test('personal Feishu sign-in provisions persistent owner-scoped files independently of team membership', {timeout:45000}, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'gitpolar-workbench-db-'));
+  const files = await mkdtemp(join(process.env.GITPOLAR_TEST_FILES_BASE || tmpdir(), 'gitpolar-workbench-files-'));
+  const options = {...configured, AUTH_PROVIDER:'feishu', FEISHU_PERSONAL_WORKSPACES:'true', WORKSPACE_FILES_DIR:files};
+  let server = await launch(directory, options, true);
+  const path = '装配/零件.SLDPRT';
+  const route = '/api/workbench/files?' + new URLSearchParams({path});
+  const fileUrl = id => '/api/workbench/files/' + id;
+  const put = (cookie, bytes, previous) => fetch(server.origin + route, {method:'PUT', body:bytes, headers:{
+    Cookie:cookie, Origin:server.origin, ...(previous ? {'If-Match':'"'+previous+'"'} : {'If-None-Match':'*'})
+  }});
+  try {
+    const alice = await loginOAuth(server, 'denied', undefined, false, '/');
+    const bob = await loginOAuth(server, 'member', undefined, false, '/');
+    assert.equal(alice.location, '/'); assert.equal(bob.location, '/');
+    const who = async cookie => (await request(server, '/api/session', {cookie})).value.user;
+    const a = await who(alice.cookie), b = await who(bob.cookie);
+    assert.equal(a.personalOnly, true); assert.equal(b.role, 'writer'); assert.notEqual(a.id, b.id);
+    assert.equal((await request(server, '/api/repos', {cookie:alice.cookie})).status, 401);
+    assert.equal((await request(server, '/api/repos', {cookie:bob.cookie})).status, 200);
+    assert.equal((await request(server, '/api/workbench')).status, 401);
+    const one = await put(alice.cookie, Buffer.from([0,1,2,255]));
+    const two = await put(bob.cookie, 'second drawing');
+    assert.equal(one.status, 201); assert.equal(two.status, 201);
+    const first = await one.json(), second = await two.json();
+    assert.deepEqual(await readFile(join(files,String(a.id),first.id)), Buffer.from([0,1,2,255]));
+    assert.equal(await readFile(join(files,String(b.id),second.id),'utf8'), 'second drawing');
+    assert.equal((await request(server, fileUrl(first.id), {cookie:bob.cookie})).status, 404);
+    assert.equal((await request(server, fileUrl(second.id), {cookie:alice.cookie})).status, 404);
+    assert.equal((await put(alice.cookie, 'unconfirmed replacement')).status, 409);
+    const revised = await put(alice.cookie, 'revised', first.id);
+    assert.equal(revised.status, 200);
+    const saved = await revised.json();
+    assert.equal((await put(alice.cookie, 'stale', first.id)).status, 409);
+    await server.stop(); server = await launch(directory, options, true);
+    const again = await loginOAuth(server, 'denied', undefined, false, '/');
+    assert.equal((await who(again.cookie)).id, a.id);
+    const list = (await request(server, '/api/workbench', {cookie:again.cookie})).value.files;
+    assert.deepEqual(list.map(f=>[f.path,f.id]), [[path,saved.id]]);
+    assert.equal((await request(server, fileUrl(saved.id), {cookie:again.cookie})).value,'revised');
+    await request(server, '/api/logout', {method:'POST',cookie:again.cookie});
+    assert.equal((await request(server, '/api/workbench', {cookie:again.cookie})).status,401);
+    // 后来加入团队仍保留原来的工作台和文件。
+    await server.stop(); server = await launch(directory, {...options,FEISHU_ALLOWED_TENANTS:'foreign-tenant'}, true);
+    const joined = await loginOAuth(server, 'denied', undefined, false, '/');
+    assert.equal((await who(joined.cookie)).id, a.id);
+    assert.equal((await who(joined.cookie)).role, 'writer');
+    assert.equal((await request(server, fileUrl(saved.id), {cookie:joined.cookie})).value,'revised');
+  } finally {
+    await server.stop();
+    await rm(files, {recursive:true, force:true});
+    await rm(directory, {recursive:true, force:true});
+  }
+});
 
 test('Feishu OAuth uses PKCE, identity binding, allowlists and persistent gitpolar accounts',{timeout:45000},async()=>{
   const directory=await mkdtemp(join(tmpdir(),'gitpolar-feishu-'));let server=await launch(directory,{},true);
@@ -62,6 +121,11 @@ test('Feishu OAuth uses PKCE, identity binding, allowlists and persistent gitpol
     assert.equal((await request(server,'/auth/feishu?link=1')).status,401);
     const denied=await loginOAuth(server,'denied');assert.equal(denied.location,'/?auth=not-allowed');
     const joined=await loginOAuth(server,'member');assert.equal(joined.location,'/procurement/');
+    const destination = '/#/repos/robot?branch=main';
+    assert.equal((await loginOAuth(server,'member',undefined,false,destination)).location,destination);
+    assert.equal((await loginOAuth(server,'member',undefined,false,'https://example.org/')).location,'/procurement/');
+    const deniedReturn = new URL((await loginOAuth(server,'denied',undefined,false,destination)).location,server.origin);
+    assert.equal(deniedReturn.pathname,'/login/');assert.equal(deniedReturn.searchParams.get('returnTo'),destination);
     const member=(await request(server,'/api/session',{cookie:joined.cookie})).value.user;assert.equal(member.role,'writer');
     assert.equal((await request(server,'/api/session',{cookie:joined.cookie})).value.feishuLinked,true);
     const replay=await request(server,'/auth/feishu/callback?'+new URLSearchParams({state:joined.state,code:'member'}),{cookie:joined.oauthCookie});assert.equal(replay.location,'/?auth=failed');

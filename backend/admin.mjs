@@ -7,6 +7,7 @@ import { git, branchOverview } from './git.mjs';
 import { releaseLock } from './lfs.mjs';
 import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
 import { feishuCliStatus } from './feishu-cli.mjs';
+import { requestOrigin } from './request-origin.mjs';
 
 const version = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version;
 const versions = Promise.all([
@@ -136,7 +137,7 @@ async function repositories(refresh) {
       }
       return {id:repo.id,name:repo.name,description:repo.description,status:repo.status,createdAt:repo.created_at,creator:repo.creator,
         defaultBranch:branches.defaultBranch,branchCount:branches.branches.length,
-        cloneUrl:new URL('/' + namespace + '/' + repo.name + '.git',origin).href,
+        cloneUrl:new URL('/' + namespace + '/' + repo.name + '.git',requestOrigin()).href,
         gitBytes:snapshot.gitSizes.get(repo.name) || 0,lfsBytes:snapshot.lfsSizes.get(repo.id) || 0,
         lfsObjects:repo.lfsObjects,incompleteLfsObjects:repo.incompleteLfsObjects,locks:repo.locks,...(error?{error}:{})};
     })));

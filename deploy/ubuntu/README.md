@@ -37,3 +37,31 @@ repositories、lfs、procurement 通过 bind mount 映射进 /var/lib/gitpolar�
 新提交放入新的 releases 目录并安装依赖，保留配置和数据，再执行 install.sh。回退时针对原发布目录执行同一脚本。数据库有结构迁移时先保留与该发布配套的一致性备份。
 
 运行日志用 journalctl -u gitpolar --no-pager -n 100 查看。下载、运行时缓存和临时传输文件放在用户 .cache/gitpolar 中，应用目录中不放正式配置和业务数据。
+
+## 局域网域名（sslip.io）
+
+当前服务器使用 `http://gitpolar.10-24-4-208.sslip.io` 作为团队入口。sslip.io 将域名中的 IP 解析为 10.24.4.208，浏览器和 Git 客户端直接访问局域网服务器；公网服务器不参与文件传输。客户端仍需能连通这个内网 IP。
+
+同一地址迁移部署时，安装 Nginx，将本目录 gitpolar.nginx.conf 复制到 /etc/nginx/sites-available/gitpolar，并在 sites-enabled 下创建符号链接。首次安装 Nginx 时移除发行版默认站点的启用链接，再执行 nginx -t 和 systemctl reload nginx。该配置监听 80 端口，代理本机 4317，允许大请求体并关闭请求和响应缓冲；裸 IP 的 80 端口请求会以 308 跳转到正式域名。
+
+将 /etc/gitpolar/gitpolar.env 中的 APP_ORIGIN 设置为：
+
+```dotenv
+APP_ORIGIN=http://gitpolar.10-24-4-208.sslip.io
+```
+
+先确认客户端能解析、访问新域名，再重启 gitpolar.service。从新域名重新使用飞书扫码登录；旧 IP 的浏览器 Cookie 不会迁移到新域名。网页登录仍只使用飞书 CLI 扫码，备用 OAuth 未启用时不需要配置回调。已有 Git 工作区通过 git remote set-url origin 更新到新域名，仓库相对路径保持原值。
+
+客户端使用 Clash/Mihomo 的 fake-ip 模式时，可在其全局合并配置中加入以下规则。若已有 hosts、dns 或 tun 字段，应合并条目并保留其他设置：
+
+```yaml
+hosts:
+  gitpolar.10-24-4-208.sslip.io: 10.24.4.208
+dns:
+  use-hosts: true
+tun:
+  route-exclude-address:
+    - 10.24.4.208/32
+```
+
+配置后校验 DNS 返回 10.24.4.208，访问 /api/session 检查 origin 为新域名，并检查登录二维码、Git/LFS 鉴权、采购和管理页面。这里使用 HTTP；更换服务器 IP 时，同步更新域名、Nginx 的 server_name/跳转地址、APP_ORIGIN 和客户端代理规则。

@@ -23,7 +23,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     actions: ['Actions', 'play'], projects: ['Projects', 'project'], wiki: ['Wiki', 'book'],
     security: ['Security', 'shield'], insights: ['Insights', 'graph'], settings: ['Settings', 'gear'],
   };
-  const pages = [['home', 'Dashboard', 'home'], ['repos', 'Repositories', 'repo'], ['issues', 'Issues', 'issue-opened'], ['pulls', 'Pull requests', 'git-pull-request']];
+  const pages = [['home', '工作台', 'home'], ['repos', '代码仓库', 'repo'], ['issues', '议题', 'issue-opened'], ['pulls', '合并请求', 'git-pull-request']];
   const namePattern = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 
   function read(key, fallback) {
@@ -40,12 +40,14 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   const localTickets = array('tickets').filter(t => t?.kind === 'issues' && typeof t.title === 'string' && typeof t.body === 'string' && Number.isSafeInteger(t.id) && repos.some(r => r.name === t.repo));
   const tickets = onServer ? [] : [...localTickets, ...demoTickets];
   let starred = array('starred');
-  let pinned = array('pinned', ['rover-sim', 'telemetry-kit']);
+  let pinned = onServer ? [] : array('pinned', ['rover-sim', 'telemetry-kit']);
   let watched = array('watched');
-  let theme = read('theme', 'light') === 'dark' ? 'dark' : 'light';
+  let theme = read('theme', 'dark') === 'light' ? 'light' : 'dark';
   let ticketState = 'open';
   let feedKind = 'all';
   let session = null;
+  let workbench = null;
+  let uploadingFiles = false;
   let toastTimer;
 
   const api = window.GitpolarAPI;
@@ -64,6 +66,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
   function updateAccount() {
     const user = session?.user;
+    document.body.classList.toggle('personal-only', Boolean(user?.personalOnly));
     document.querySelector('.drawer-footer .local-badge').textContent='NAS Git + LFS';
     document.querySelector('#account-avatar').innerHTML = avatar(user?.username || user?.login || 'polar-lab','large');
     document.querySelector('.account-trigger').setAttribute('aria-label',user ? `gitpolar account ${user.username || user.login}` : 'Open user menu');
@@ -71,9 +74,23 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   async function refreshLive() {
     if(refreshPromise) return refreshPromise;
     refreshPromise = (async () => {
+      const previousUser = session?.user?.id;
       session = await api('session'); updateAccount();
+      if (previousUser !== session.user?.id) {
+        workbench = null; repos.length = tickets.length = activity.length = 0; browseCache.clear();
+        if (liveEvents) { liveEvents.close(); liveEvents = null; }
+      }
+      if (!session.user && session.authProvider === 'feishu') {
+        const destination = location.pathname + location.search + location.hash;
+        location.replace('/login/?returnTo=' + encodeURIComponent(destination));
+        return;
+      }
       if(session.user) {
-        const [catalog, data] = await Promise.all([api('repos'),api('issues')]);
+        pinned = array('pinned:' + session.user.id);
+        const team = !session.user.personalOnly;
+        const [catalog, data, personal] = await Promise.all([team ? api('repos') : {repos:[]}, team ? api('issues') : {issues:[]},
+          session.capabilities.personalWorkbench ? api('workbench') : null]);
+        workbench = personal;
         repos.splice(0,repos.length,...catalog.repos.map(r=>({...r,updated:relativeTime(r.updated)})));
         tickets.splice(0,tickets.length,...data.issues.map(t=>({...t,updated:relativeTime(t.updated)})));
         starred = repos.filter(r=>r.starred).map(r=>r.name);
@@ -81,7 +98,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
         activity.splice(0,activity.length,...tickets.slice(0,6).map(t=>({repo:t.repo,kind:'issues',id:t.id})));
       } else {repos.length=0;tickets.length=0;activity.length=0;if(liveEvents){liveEvents.close();liveEvents=null;}}
       backendError='';render();
-      if(session.user && !liveEvents) {
+      if(session.user && !session.user.personalOnly && !liveEvents) {
         liveEvents = new EventSource('/api/events');
         liveEvents.addEventListener('repository',()=>{browseCache.clear();refreshLive().catch(error=>notify(error.message));refreshCadLocks().catch(error=>notify(error.message));});
       }
@@ -104,6 +121,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
   function liveAccount() {
     if(!session?.user) return localLogin();
+    if (session.user.personalOnly) {
+      openDialog(session.user.name || session.user.username, `<div class="account-menu"><button data-action="logout">${icon('sign-out')}退出登录</button></div>`, 'is-account-menu');
+      return;
+    }
     openDialog(session.user.username,`<div class="account-menu"><p>Signed in as <strong>${escape(session.user.username)}</strong><br><small>${escape(session.user.role)} · ${escape(session.namespace)}</small></p><button data-action="procurement">${icon('repo')}采购与库存</button>${session.feishuLoginUrl&&session.authProvider!=='feishu'?`<button data-action="feishu-link">${icon('link')}${session.feishuLinked?'飞书账号已绑定':'绑定飞书账号'}</button>`:''}<button data-action="access-tokens">${icon('key' in OCTICONS ? 'key' : 'lock')}Git access tokens</button>${session.user.role==='admin'?`<button data-action="admin">${icon('gear')}管理后台</button>`:''}<button data-action="theme">${icon(theme==='light'?'moon':'sun')}Appearance: ${theme==='light'?'Light':'Dark'}</button><button data-action="logout">${icon('sign-out')}Sign out</button></div>`,'is-account-menu');
   }
   async function tokenMenu() {
@@ -399,7 +420,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
   function applyTheme() {
     document.documentElement.dataset.theme = theme;
-    document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#010409' : '#f6f8fa';
+    document.querySelector('meta[name="theme-color"]').content = '#465069';
   }
   function localRepo({ name, description }) {
     return { name, description, language: 'Markdown', tone: 'blue', updated: 'just now',
@@ -442,7 +463,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     return `<button type="button" class="button${small ? ' small' : ''}" data-action="star" data-repo="${escape(repo.name)}" aria-pressed="${active}" aria-label="${active ? 'Unstar' : 'Star'} ${escape(repo.name)}">${icon(active ? 'star-fill' : 'star')}${active ? 'Starred' : 'Star'}</button>`;
   }
   function renderNav(repo, tab, page) {
-    document.querySelector('.drawer-nav').innerHTML = pages.map(([key, label, symbol]) => `<a href="#/${key === 'home' ? '' : key}"${key === page ? ' aria-current="page"' : ''}>${icon(symbol)}${label}</a>`).join('') + (onServer ? `<a href="/albums/">${icon('book')}活动相册</a><a href="/procurement/">${icon('repo')}采购与库存</a>${session?.user?.role==='admin'?`<a href="/admin/">${icon('gear')}管理后台</a>`:''}` : '');
+    const sections = session?.user?.personalOnly ? pages.slice(0, 1) : pages;
+    const links = sections.map(([key, label, symbol]) => `<a href="#/${key === 'home' ? '' : key}"${key === page ? ' aria-current="page"' : ''}>${icon(symbol)}${label}</a>`).join('');
+    const tools = onServer && !session?.user?.personalOnly ? `<a href="/albums/">${icon('book')}活动相册</a><a href="/procurement/">${icon('project')}采购与库存</a>${session?.user?.role === 'admin' ? `<a href="/admin/">${icon('gear')}管理后台</a>` : ''}` : '';
+    document.querySelectorAll('.workspace-nav, .drawer-nav').forEach(nav => { nav.innerHTML = links + tools; });
     const topNav = document.querySelector('#top-nav');
     topNav.hidden = !repo;
     topNav.innerHTML = repo ? Object.entries(tabs).map(([key, [label, symbol]]) => {
@@ -465,6 +489,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     view.className = `view${page === 'home' ? ' is-home' : repo ? ' is-repo' : ''}`;
     renderNav(repo, tab==='compare'?'code':tab, page);
     if(onServer && !session?.user) {view.className="view";view.innerHTML=liveWelcome();return;}
+    if(session?.user?.personalOnly) { view.className='view is-home'; view.innerHTML=dashboard(); document.title='个人工作台 · gitpolar'; return; }
     if(onServer && repo && tab==='graph'){window.GitpolarGraph?.mount(view,repo,query);document.title='Git Graph · '+repo.name+' · gitpolar';return;}
     if(onServer && repo && tab==='compare'){window.GitpolarComparison?.mount(view,repo,query);document.title='Compare · '+repo.name+' · gitpolar';return;}
     if(onServer && repo && tab==='code' && !ensureBrowse(repo,query)) return;
@@ -483,43 +508,84 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     return `<div class="panel empty">${icon(symbol, 32)}<h2>${escape(title)}</h2><p>${escape(text)}</p></div>`;
   }
 
+  function personalFiles() {
+    if (!workbench) return `<p class="workspace-empty">${escape(backendError || '正在读取个人文件…')}</p>`;
+    const rows = workbench.files.map(file => `<li><a href="/api/workbench/files/${encodeURIComponent(file.id)}" download>${escape(file.path)}</a><small>${escape(formatBytes(file.size))}</small></li>`);
+    return `<section class="personal-files" aria-label="我的文件"><header><h2>我的文件</h2><div class="private-file-actions">
+      <button class="button primary" data-action="upload-personal-file" ${uploadingFiles ? 'disabled' : ''}>上传文件</button>
+      <button class="button" data-action="upload-personal-folder" ${uploadingFiles ? 'disabled' : ''}>上传文件夹</button></div></header>
+      <input id="personal-file" type="file" multiple hidden><input id="personal-folder" type="file" webkitdirectory multiple hidden>
+      <p id="personal-progress" role="status"></p>
+      ${rows.length ? `<ul>${rows.join('')}</ul>` : '<p class="muted">还没有个人文件，可以上传代码或图纸。</p>'}</section>`;
+  }
+
+  async function uploadPersonalFiles(selected) {
+    if (uploadingFiles || !selected.length || !workbench) return;
+    const existing = new Map(workbench.files.map(file => [file.path, file.id]));
+    const files = Array.from(selected, file => ({file, path: (file.webkitRelativePath || file.name).normalize('NFC')}));
+    const duplicates = files.filter(item => existing.has(item.path)).length;
+    if (duplicates && !window.confirm(`覆盖工作台中的 ${duplicates} 个同名文件？`)) return;
+    const owner = session.user.id;
+    uploadingFiles = true;
+    render();
+    let completed = 0;
+    try {
+      for (const {file, path} of files) {
+        const progress = document.querySelector('#personal-progress');
+        if (progress) progress.textContent = `正在上传 ${completed + 1}/${files.length} · ${path}`;
+        const headers = {'X-Gitpolar-Workspace': String(owner)};
+        if (existing.has(path)) headers['If-Match'] = '"' + existing.get(path) + '"';
+        else headers['If-None-Match'] = '*';
+        const response = await fetch('/api/workbench/files?' + new URLSearchParams({path}), {
+          method: 'PUT', headers, body: file, credentials: 'same-origin'
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || '上传失败，请重试。');
+        existing.set(path, result.id); completed++;
+      }
+      notify(`已保存 ${completed} 个个人文件`);
+    } catch (error) {
+      notify(`已保存 ${completed}/${files.length} 个文件。${error.message}`);
+    } finally {
+      uploadingFiles = false;
+      await refreshLive();
+    }
+  }
+
+
+  function workbenchRepos() {
+    return onServer ? repos.filter(repo => repo.creator_id === session?.user?.id || repo.starred || repo.watched || pinned.includes(repo.name)) : repos;
+  }
+
   function dashboard() {
-    if(onServer && !repos.length) return `<section class="live-welcome panel">${icon('repo',48)}<h1>Your NAS Git workspace is ready</h1><p>创建第一个仓库，即可从局域网客户端 clone、push，并在这里查看提交。</p><button class="button primary" data-action="new-repo">Create repository</button></section>`;
-    const visible = activity.filter(a => feedKind === 'all' || a.kind === feedKind);
+    const canCreate = !onServer || session?.user?.role !== 'reader';
+    const personalRepos = workbenchRepos();
+    const events = onServer ? tickets.filter(ticket => ticket.author === session.user.username) : activity;
+    const cards = events.filter(item => feedKind === 'all' || item.kind === feedKind).map(feedCard);
+    if (onServer && feedKind === 'all') cards.push(...personalRepos.map(liveFeedCard));
+    const heading = onServer ? escape(session.user.name || session.user.username) + '的工作台' : '工作区动态';
+    if (session?.user?.personalOnly) return `<section class="home-main private-home" aria-labelledby="workbench-title"><header class="workspace-pane-head"><h1 id="workbench-title">${heading}</h1></header>${personalFiles()}</section>`;
+    const emptyFeed = repos.length
+      ? `<p class="workspace-empty">${onServer && feedKind === 'all' ? '你创建的议题，以及你收藏、关注或置顶的仓库动态，会显示在这里。' : '暂无此类动态'}</p>`
+      : `<div class="workspace-empty">${icon('repo', 32)}<h3>暂无代码仓库</h3>${canCreate ? '<button class="button primary" data-action="new-repo">创建第一个仓库</button>' : ''}</div>`;
     return `<div class="home-layout">
-      <aside class="home-sidebar" aria-label="Your repositories">
-        <a class="sidebar-org" href="#/repos">${avatar('polar-lab', 'small org')}${namespaceLabel()} ${icon('chevron-down', 12)}</a>
-        <div class="section-head"><h2>Top repositories</h2><button class="button primary small" data-action="new-repo">${icon('repo')}New</button></div>
-        <input type="search" class="form-input sidebar-search" id="sidebar-search" aria-label="Find a repository" placeholder="Find a repository…">
-        <div id="sidebar-repos">${sidebarRepos(repos)}</div>
-        <a class="sidebar-more" href="#/repos">Show more</a>
-        <section class="sidebar-block"><div class="section-head"><h2>Recent activity</h2></div>
-          ${tickets.filter(t => t.state === 'open').slice(0, 3).map(t => `<a class="recent-item" href="${ticketHref(t)}">${icon(t.kind === 'issues' ? 'issue-opened' : 'git-pull-request')}<span>${namespaceLabel()}/${escape(t.repo)}<br>${escape(t.title)} #${t.id}</span></a>`).join('')}
-        </section>
-        <section class="sidebar-block"><div class="section-head"><h2>Your teams</h2></div><p>You are working in the ${namespaceLabel()} team workspace.</p><a class="button small" href="#/repos">View repositories</a></section>
+      <aside class="home-sidebar" aria-label="代码仓库">
+        <header class="workspace-pane-head"><h1>${onServer ? '我的仓库' : '代码仓库'}</h1>${canCreate ? `<button type="button" class="button icon-button ghost" data-action="new-repo" aria-label="新建仓库" title="新建仓库">${icon('plus')}</button>` : ''}</header>
+        <label class="workspace-list-search">${icon('search')}<input id="sidebar-search" type="search" aria-label="筛选仓库" placeholder="筛选仓库"></label>
+        <div class="workspace-repos" id="sidebar-repos">${sidebarRepos(personalRepos)}</div>
+        <a class="sidebar-more" href="#/repos">查看全部仓库 ${icon('chevron-right', 14)}</a>
       </aside>
-      <div class="home-main">
-        <div class="feed-column">
-          <header class="feed-title"><h1>Home</h1><button class="button small" data-action="feed-filter">${icon('filter')}Filter${feedKind === 'all' ? '' : ' · 1'}</button></header>
-          <p class="feed-intro">${icon('feed-star')}For you</p>
-          <div id="activity-feed">${onServer && feedKind==='all' ? repos.map(liveFeedCard).join('') : visible.map(feedCard).join('')}</div>
-          ${footer()}
-        </div>
-        <aside class="home-right" aria-label="Workspace updates">
-          <section class="right-section"><h2>Latest changes</h2>
-            ${(onServer ? repos.slice(0,4) : activity).map(a => { if(onServer)return `<div class="change-item"><time>${escape(a.updated)}</time><a href="${repoHref(a.name)}">${escape(a.commit.message)}</a></div>`; const t = tickets.find(t => t.repo === a.repo && t.kind === a.kind && t.id === a.id); return `<div class="change-item"><time>${escape(t.updated)}</time><a href="${ticketHref(t)}">${escape(t.title)}</a></div>`; }).join('')}
-            <a class="right-link" href="#/pulls">View all pull requests →</a>
-          </section>
-          <section class="right-section"><h2>Explore repositories</h2>
-            ${repos.slice(1, 3).map(r => `<div class="explore-item"><a href="${repoHref(r.name)}">${avatar('polar-lab', 'small org')}${namespaceLabel()} / ${escape(r.name)}</a><p>${escape(r.description)}</p><div class="repo-metadata">${language(r)}</div></div>`).join('')}
-            <a class="right-link" href="#/repos">Explore more →</a>
-          </section>
-        </aside>
-      </div>
+      <section class="home-main" aria-labelledby="workbench-title">
+        <header class="workspace-pane-head"><h2 id="workbench-title">${heading}</h2><button class="button small" data-action="feed-filter">${icon('filter')}筛选${feedKind === 'all' ? '' : ' · 1'}</button></header>
+        ${workbench ? personalFiles() : ''}
+        <div class="workspace-timeline" id="activity-feed">${cards.join('') || emptyFeed}</div>
+      </section>
     </div>`;
   }
   function sidebarRepos(items) {
-    return items.slice(0, 7).map(r => `<a class="sidebar-repo" href="${repoHref(r.name)}">${avatar('polar-lab', 'small org')}<span>${namespaceLabel()}/${escape(r.name)}</span></a>`).join('') || '<small class="muted">No repositories found.</small>';
+    return items.slice(0, 12).map(repo => `<a class="sidebar-repo" href="${repoHref(repo.name)}">
+      <span class="repo-tile">${icon('repo', 19)}</span><span class="repo-row-text"><strong>${escape(repo.name)}</strong><small>${escape(repo.description || repo.defaultBranch || '')}</small></span></a>`
+    ).join('') || '<p class="workspace-list-empty">没有匹配的仓库</p>';
   }
   function feedCard(event) {
     const ticket = tickets.find(t => t.repo === event.repo && t.kind === event.kind && t.id === event.id);
@@ -842,6 +908,9 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
 
   document.addEventListener('input',event=>{if(event.target.id==='cad-filter')filterCadFiles();});
   document.addEventListener('change',event=>{if(event.target.id==='cad-kind')filterCadFiles();});
+  document.addEventListener('change', event => {
+    if (['personal-file', 'personal-folder'].includes(event.target.id)) uploadPersonalFiles(event.target.files);
+  });
   document.addEventListener('click', event => {
     if (event.target.closest('.skip-link')) { event.preventDefault(); view.focus(); return; }
     if (event.target.closest('.drawer a')) setMenu(false);
@@ -852,6 +921,8 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     const { action, repo: name, branch = 'main', path } = button.dataset;
     const repo = repos.find(r => r.name === name);
     switch (action) {
+      case 'upload-personal-file': document.querySelector('#personal-file')?.click(); break;
+      case 'upload-personal-folder': document.querySelector('#personal-folder')?.click(); break;
       case 'live-login': localLogin(); break;
       case 'access-tokens': tokenMenu(); break;
       case 'procurement': if(onServer)location.assign('/procurement/'); break;
@@ -878,7 +949,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       case 'close': dialog.close(); break;
       case 'star': if(onServer){api(`repos/${name}/preferences`,{method:'POST',body:{kind:'star',enabled:!starred.includes(name)}}).then(refreshLive).catch(error=>notify(error.message));break;} starred = starred.includes(name) ? starred.filter(n => n !== name) : [...starred,name]; write('starred',starred); render(); break;
       case 'watch': if(onServer){api(`repos/${name}/preferences`,{method:'POST',body:{kind:'watch',enabled:!watched.includes(name)}}).then(refreshLive).catch(error=>notify(error.message));break;} watched = watched.includes(name) ? watched.filter(n => n !== name) : [...watched,name]; write('watched',watched); render(); break;
-      case 'pin': pinned = pinned.includes(name) ? pinned.filter(n => n !== name) : [...pinned,name]; write('pinned',pinned); render(); notify(pinned.includes(name) ? 'Pinned to your repositories.' : 'Repository unpinned.'); break;
+      case 'pin':
+        pinned = pinned.includes(name) ? pinned.filter(n => n !== name) : [...pinned,name];
+        write(onServer ? 'pinned:' + session.user.id : 'pinned', pinned);
+        render(); notify(pinned.includes(name) ? 'Pinned to your repositories.' : 'Repository unpinned.'); break;
       case 'share': copyText(new URL(repoHref(name),location.href).href); break;
       case 'copy-value': copyText(button.parentElement.querySelector('input').value); break;
       case 'copy-file': copyText(filesFor(repo,branch).find(f => f.path === path).text); break;
@@ -899,7 +973,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     if (event.target.id === 'search-query') searchResults(event.target.value);
     if (event.target.id === 'repo-filter') filterRepos();
     if (event.target.id === 'ticket-filter') filterTickets();
-    if (event.target.id === 'sidebar-search') document.querySelector('#sidebar-repos').innerHTML = sidebarRepos(repos.filter(r => r.name.toLowerCase().includes(event.target.value.toLowerCase())));
+    if (event.target.id === 'sidebar-search') document.querySelector('#sidebar-repos').innerHTML = sidebarRepos(workbenchRepos().filter(r => r.name.toLowerCase().includes(event.target.value.toLowerCase())));
   });
   document.addEventListener('change', event => {
     if (event.target.id === 'branch-select') location.hash = repoHref(event.target.dataset.repo,'code',event.target.value,route().query.get('path')||'');

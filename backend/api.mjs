@@ -1,9 +1,11 @@
+import { workbenchApi } from './workbench.mjs';
 import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { db,getUser,userCount,repository,now } from './store.mjs';
-import { namespace,origin,callbackUrl,githubConfigured,cookieName,sessionSeconds,authProvider } from './config.mjs';
+import { namespace,githubConfigured,cookieName,sessionSeconds,authProvider,personalWorkspacesEnabled } from './config.mjs';
+import { requestOrigin } from './request-origin.mjs';
 import { authenticate,requireAuth,requireOrigin,body,json,fail,createUser,checkPassword,newSession,newToken,cookie,hash,setCookie } from './auth.mjs';
 import { createRepository,describe,browse,fileContent,resolveRef,commitFiles,streamGit,fileIndex,fileMeta,history,tree,branchOverview,createBranch,deleteBranch } from './git.mjs';
 import { objectPath,lockList,createLock,releaseLock } from './lfs.mjs';
@@ -17,7 +19,7 @@ import { adminApi } from './admin.mjs';
 import { procurementApi } from './procurement.mjs';
 import { warehouseApi } from './feishu-warehouse.mjs';
 import { feishuCliApi } from './feishu-cli.mjs';
-import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
+import { feishuConfigured,hasFeishuIdentity } from './feishu.mjs';
 import { firmwareApi } from './firmware.mjs';
 import { albumList, albumView, albumMedia, savePhotoSelection, changeAlbumStar, visibleAlbumStars } from './album.mjs';
 import { exportSerpentActivity } from './album-export.mjs';
@@ -29,16 +31,18 @@ function account(req,res,mutate=false) {
   if(mutate&&!auth.token)requireOrigin(req);return auth.user;
 }
 export async function api(req,res,pathname,params,changed,events) {
+  if(pathname === '/api/workbench' || pathname.startsWith('/api/workbench/')) return workbenchApi(req,res,pathname,params);
   if(pathname.startsWith('/api/feishu-cli/'))return feishuCliApi(req,res,pathname,params);
   if(pathname.startsWith('/api/procurement/feishu/'))return warehouseApi(req,res,pathname,params);
   if(pathname==='/api/procurement'||pathname.startsWith('/api/procurement/'))return procurementApi(req,res,pathname,params,changed);
   if(pathname==='/api/admin'||pathname.startsWith('/api/admin/'))return adminApi(req,res,pathname,params,changed);
   if(pathname==='/api/firmware' || pathname.startsWith('/api/firmware/'))return firmwareApi(req,res,pathname,params,changed);
-  if(pathname==='/api/albums' && req.method==='GET') { requireAuth(req,res); return json(res,await albumList()); }
   if(pathname==='/api/health')return json(res,{ok:true,service:'gitpolar',storage:'git+sqlite+lfs'});
+  if(pathname==='/api/albums' && req.method==='GET') { requireAuth(req,res); return json(res,await albumList()); }
   if(pathname==='/api/session' && req.method==='GET') {
-    const auth=authenticate(req);
-    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,authProvider,setupRequired:!userCount(),feishuLoginUrl:feishuConfigured?new URL('/auth/feishu',origin).href:null,feishuCallbackUrl,feishuLinked:Boolean(auth?.user&&hasFeishuIdentity(auth.user.id)),callbackUrl,loginUrl:authProvider!=='feishu'&&githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{procurement:true,admin:true,repositoryContext:true,git:true,lfs:true,locks:true,cad:true,preview:true,hydratedArchives:true,history:true,ssh:false,issues:true,pulls:false,firmware:Boolean(process.env.FIRMWARE_GIT_URL)}});
+    const auth=authenticate(req,{includePersonal:true}),origin=requestOrigin();
+    const team=!auth?.user?.personalOnly;
+    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,authProvider,setupRequired:!userCount(),feishuLoginUrl:feishuConfigured?new URL('/auth/feishu',origin).href:null,feishuCallbackUrl:new URL('/auth/feishu/callback',origin).href,feishuLinked:Boolean(auth?.user && (auth.user.personalOnly || hasFeishuIdentity(auth.user.id))),callbackUrl:new URL('/auth/github/callback',origin).href,loginUrl:authProvider!=='feishu'&&githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{personalWorkbench:personalWorkspacesEnabled,procurement:team,admin:team,repositoryContext:team,git:team,lfs:team,locks:team,cad:team,preview:team,hydratedArchives:team,history:team,ssh:false,issues:team,pulls:false,firmware:team&&Boolean(process.env.FIRMWARE_GIT_URL)}});
   }
   if(pathname==='/api/setup' && req.method==='POST') {
     if(authProvider==='feishu')fail(403,'Only Feishu sign-in is enabled.');
@@ -52,7 +56,8 @@ export async function api(req,res,pathname,params,changed,events) {
     const user=getUser(record.id);newSession(res,user);return json(res,{user});
   }
   if(pathname==='/api/logout' && req.method==='POST') {
-    account(req,res,true);const secret=cookie(req,cookieName);if(secret)db.prepare('DELETE FROM sessions WHERE hash=?').run(hash(secret));
+    const auth=authenticate(req,{includePersonal:true});if(!auth)fail(401,'Sign in first.');
+    if(!auth.token)requireOrigin(req);const secret=cookie(req,cookieName);if(secret)db.prepare('DELETE FROM sessions WHERE hash=?').run(hash(secret));
     res.writeHead(204,{'Set-Cookie':setCookie(cookieName,'',0)}).end();return;
   }
   if(pathname==='/api/users') {

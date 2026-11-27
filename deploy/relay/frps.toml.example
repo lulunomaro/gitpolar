@@ -1,0 +1,11 @@
+bindAddr = "0.0.0.0"
+bindPort = 80
+vhostHTTPPort = 80
+vhostHTTPSPort = 443
+auth.method = "token"
+auth.token = "CHANGE_ME"
+transport.tls.force = true
+transport.tls.certFile = "/etc/gitpolar-relay/control.crt"
+transport.tls.keyFile = "/etc/gitpolar-relay/control.key"
+log.to = "console"
+log.level = "info"

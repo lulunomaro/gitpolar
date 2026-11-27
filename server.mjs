@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 const envFile=fileURLToPath(new URL('./.env',import.meta.url));
 if(existsSync(envFile))loadEnvFile(envFile);
 const {origin,host,port,namespace,githubConfigured,authProvider}=await import('./backend/config.mjs');
+const {withRequestOrigin}=await import('./backend/request-origin.mjs');
 const {repository,db}=await import('./backend/store.mjs');
 const {HttpError,requireAuth,json}=await import('./backend/auth.mjs');
 const {git,smartHttp,installHook}=await import('./backend/git.mjs');
@@ -37,6 +38,8 @@ const assets=new Map([
   ['/albums/app.js',['albums/app.js','text/javascript; charset=utf-8']],['/albums/styles.css',['albums/styles.css','text/css; charset=utf-8']],
   ['/login',['login/index.html','text/html; charset=utf-8']],['/login/',['login/index.html','text/html; charset=utf-8']],
   ['/login/app.js',['login/app.js','text/javascript; charset=utf-8']],['/login/styles.css',['login/styles.css','text/css; charset=utf-8']],
+  ['/login/feishu-mark.png',['login/feishu-mark.png','image/png']],
+  ['/login/feishu-illustration.webp',['login/feishu-illustration.webp','image/webp']],
   ['/procurement',['procurement/index.html','text/html; charset=utf-8']],['/procurement/',['procurement/index.html','text/html; charset=utf-8']],
   ['/procurement/index.html',['procurement/index.html','text/html; charset=utf-8']],['/procurement/app.js',['procurement/app.js','text/javascript; charset=utf-8']],
   ['/procurement/workbench.js',['procurement/workbench.js','text/javascript; charset=utf-8']],
@@ -88,13 +91,13 @@ async function handle(req,res) {
 }
 const version=(await git(null,['--version'])).trim();
 for(const repo of db.prepare("SELECT * FROM repos WHERE status='ready'").all())await installHook(repo);
-export const server=createServer((req,res)=>{
+export const server=createServer((req,res)=>withRequestOrigin(req,()=>{
   handle(req,res).catch(error=>{
     if(res.headersSent||res.destroyed){res.destroy();return;}
     if(!(error instanceof HttpError))console.error('gitpolar request failed:',error.message);
     json(res,{error:error instanceof HttpError?error.message:'The server could not complete the request.'},error.status||500);
   });
-});
+}));
 server.requestTimeout=0;
 server.listen(port,host,()=>{
   console.log(`gitpolar listening on ${host}:${port}. Open ${origin.origin}`);

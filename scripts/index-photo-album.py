@@ -141,8 +141,6 @@ def neutral_rgb(image):
 
 
 def image_metadata_and_views(staged, previews, oid, folder_date, filename):
-    # JPEG's decoder detects MPO automatically. Older Pillow versions do not
-    # register MPO as a separate opener, so keep it out of the opener allowlist.
     with Image.open(staged, formats=("JPEG", "PNG", "GIF", "WEBP")) as image:
         mime = MIME[image.format]
         exif = image.getexif()

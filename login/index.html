@@ -4,47 +4,31 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>飞书扫码登录 · gitpolar</title>
+  <title>登录 gitpolar</title>
   <link rel="icon" type="image/png" href="/assets/gitpolar-logo.png">
   <link rel="stylesheet" href="/login/styles.css">
   <script type="module" src="/login/app.js"></script>
 </head>
 <body>
-  <main class="login-shell">
-    <a class="brand" href="/" aria-label="gitpolar 首页"><img src="/assets/gitpolar-logo.png" width="48" height="48" alt=""><span>gitpolar</span></a>
-    <h1>飞书扫码登录</h1>
-    <p class="intro">用团队飞书账号进入 gitpolar。</p>
-    <section class="login-card" aria-label="飞书登录" aria-busy="true" id="login-card">
-      <ol class="steps" aria-label="登录步骤">
-        <li id="step-1"><span class="step-number" aria-hidden="true">1</span><span>点击生成二维码</span></li>
-        <li id="step-2"><span class="step-number" aria-hidden="true">2</span><span>用飞书扫码并确认</span></li>
-        <li id="step-3"><span class="step-number" aria-hidden="true">3</span><span>自动进入 gitpolar</span></li>
-      </ol>
-      <div class="connection" id="connection" role="status" aria-live="polite">正在检查飞书登录服务…</div>
-      <div class="message" id="message" role="alert" hidden></div>
-      <div id="ready" hidden><p class="hint">打开手机飞书，扫描接下来显示的二维码。</p></div>
-      <div class="qr-area" id="qr-area" hidden>
-        <div class="qr-frame"><img id="qr" width="224" height="224" alt="飞书登录授权二维码"></div>
-        <p id="qr-error" class="image-error" role="status" hidden>二维码图片暂时无法加载，可使用下方链接继续授权。</p>
-        <p class="scan-title">请用手机飞书扫一扫</p>
-        <p class="hint">在飞书中确认授权后，本页会自动跳转。</p>
-        <p class="countdown" id="countdown" aria-label="二维码剩余有效时间"></p>
-        <a id="verification-link" target="_blank" rel="noopener noreferrer">在飞书授权页打开 <span aria-hidden="true">↗</span></a>
+  <main class="login-page" aria-label="登录 gitpolar">
+    <div class="login-panel">
+      <div class="login-card">
+        <button id="login" type="button" disabled>
+          <img src="/login/feishu-mark.png" width="22" height="22" alt="">使用飞书登录
+        </button>
+        <section id="scan" aria-labelledby="scan-title" hidden>
+          <h1 id="scan-title" tabindex="-1">用飞书扫码登录</h1>
+          <p>用手机飞书扫一扫，选择已开通应用的身份。确认后，这个页面会自动进入你的工作台。</p>
+          <img id="qr" width="224" height="224" alt="本次飞书官方授权二维码">
+          <div class="scan-actions">
+            <button id="open-official" type="button">在本机打开飞书授权页</button>
+            <button id="cancel" type="button">取消</button>
+          </div>
+        </section>
+        <p id="error" role="alert" hidden></p>
+        <noscript><p>请启用 JavaScript 后使用飞书登录。</p></noscript>
       </div>
-      <div class="result" id="result" hidden><span class="result-symbol" id="result-symbol" aria-hidden="true"></span><h2 id="result-title"></h2><p id="result-description"></p></div>
-      <div class="setup" id="setup" hidden>
-        <h2>需要 NAS 管理员配置登录服务</h2>
-        <p id="setup-reason"></p>
-        <p>管理员在 NAS 的服务运行环境中安装并初始化飞书 CLI：</p>
-        <ol class="setup-steps"><li><span>安装 CLI</span><code>npx @larksuite/cli@latest install</code></li><li><span>首次初始化</span><code>lark-cli config init</code></li></ol>
-        <p class="hint">初始化完成后，成员只需扫码登录。</p>
-        <p class="hint" id="web-hint" hidden>当前实例也已配置飞书网页登录，可从下方入口授权。</p>
-        <a class="button" id="web-login" hidden>使用飞书网页登录</a>
-      </div>
-      <div class="actions"><button class="button primary" type="button" id="start" hidden>生成飞书登录二维码</button><button class="button" type="button" id="cancel" hidden>取消登录</button><button class="button" type="button" id="refresh" hidden>重新检查配置</button></div>
-      <noscript><p class="message">请启用 JavaScript 后刷新，即可生成飞书登录二维码。</p></noscript>
-    </section>
-    <p class="footer">gitpolar · 团队协作工作区</p>
+    </div>
   </main>
 </body>
 </html>

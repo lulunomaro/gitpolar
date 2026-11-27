@@ -7,7 +7,7 @@
   --faint: #e5e9ed;
   --ink: #1f2328;
   --muted: #59636e;
-  --blue: #0969da;
+  --blue: #245bdb;
   --green: #1a7f37;
   --danger: #b62324;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
@@ -38,8 +38,8 @@ code, .file-path { overflow-wrap: anywhere; }
 .button, .icon-button, .mobile-nav { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--subtle); color: var(--ink); }
 .button { min-height: 32px; padding: 4px 12px; font-weight: 500; line-height: 20px; white-space: nowrap; box-shadow: 0 1px 0 #1f232809; }
 .button:hover:not(:disabled), .icon-button:hover:not(:disabled) { background: var(--hover); text-decoration: none; }
-.button.primary { color: white; background: #1f883d; border-color: #1a7f37; }
-.button.primary:hover:not(:disabled) { background: #1a7f37; }
+.button.primary { color: white; background: #245bdb; border-color: transparent; }
+.button.primary:hover:not(:disabled) { background: #1c4cbd; }
 .button.danger { color: white; background: var(--danger); border-color: #971e20; }
 .button.danger:hover:not(:disabled) { background: #a11d21; }
 .button.quiet-danger { color: var(--danger); }
@@ -68,6 +68,13 @@ code, .file-path { overflow-wrap: anywhere; }
 .account .icon-button { width: 28px; height: 28px; }
 .workspace { display: grid; grid-template-columns: clamp(198px, 17vw, 254px) minmax(0, 1fr); max-width: 1632px; min-height: calc(100vh - 65px); margin: 0 auto; }
 .sidebar { border-right: 1px solid var(--faint); }
+@media (min-width: 961px) {
+  body:has(.workspace:not([hidden])) .workspace { grid-template-columns: 156px minmax(0, 1fr); max-width: none; }
+  .workspace .sidebar { --ink: #fff; --muted: #e0e4ee; --blue: #b8d0ff; --border: #ffffff38; --subtle: #ffffff20; --hover: #ffffff29; color: #fff; background: #465069; }
+  .workspace .sidebar .sidebar-inner { padding: 16px 8px; }
+  .workspace .sidebar .nav-group a { min-height: 32px; border-radius: 8px; }
+  .workspace .sidebar .nav-group a[aria-current="page"]::before { display: none; }
+}
 .sidebar-inner { position: sticky; top: 0; padding: 30px 15px 24px clamp(16px, 2.2vw, 36px); }
 .workspace-identity { display: flex; gap: 10px; align-items: center; padding: 0 7px 21px; }
 .workspace-identity > div { min-width: 0; }

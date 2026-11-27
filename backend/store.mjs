@@ -13,6 +13,14 @@ db.exec(`
     role TEXT NOT NULL CHECK(role IN ('admin','writer','reader')), created_at TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS personal_workspaces (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id), open_id TEXT NOT NULL UNIQUE, tenant_key TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS workspace_files (
+    user_id INTEGER NOT NULL REFERENCES personal_workspaces(user_id), path TEXT NOT NULL,
+    object_id TEXT NOT NULL UNIQUE, size INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(user_id,path)
+  );
   CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL REFERENCES users(id), name TEXT NOT NULL, created_at TEXT NOT NULL, last_used TEXT);
   CREATE TABLE IF NOT EXISTS repos (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL, creator_id INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'creating');
   CREATE TABLE IF NOT EXISTS lfs_objects (repo_id TEXT NOT NULL REFERENCES repos(id), oid TEXT NOT NULL, size INTEGER NOT NULL, complete INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(repo_id,oid));

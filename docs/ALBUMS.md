@@ -10,10 +10,10 @@
 
 ```sh
 node scripts/import-photo-album.mjs \
-  --source '/mnt/photos/活动原图' \
-  --name team-activities \
-  --owner-id 12 \
-  --title '队伍活动相册' \
+  --source '/mnt/hdd1/北极熊活动照片' \
+  --name polar-activity-albums \
+  --owner-id 3 \
+  --title '北极熊活动相册' \
   --python python3
 ```
 
@@ -26,8 +26,8 @@ node scripts/import-photo-album.mjs \
 ## 浏览与版本
 
 - `/albums/`：相册仓库列表。
-- `/albums/?repo=team-activities`：进入全部照片，左侧活动目录按年份展开。
-- `/albums/?repo=team-activities&ref=分支名或提交ID`：浏览指定版本。
+- `/albums/?repo=polar-activity-albums`：进入全部照片，左侧活动目录按年份展开。
+- `/albums/?repo=polar-activity-albums&ref=分支名或提交ID`：浏览指定版本。
 - 原仓库页保留文件树、分支和 Git Graph；照片路径是 `photos/原有目录/文件名`。
 
 缩略图和大图 URL 固定到当前 Git 提交，切换分支后不会混用另一个版本。索引与原图内容不一致时返回明确错误，重新导入后才展示新图。点开照片可左右切换、使用键盘方向键，并下载原图。

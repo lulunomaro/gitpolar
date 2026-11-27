@@ -1,0 +1,27 @@
+serverAddr = "120.77.59.48"
+serverPort = 80
+auth.method = "token"
+auth.token = "CHANGE_ME"
+transport.tls.enable = true
+transport.tls.serverName = "gitpolar.120-77-59-48.sslip.io"
+transport.tls.trustedCaFile = "/etc/gitpolar/relay-control.crt"
+log.to = "console"
+log.level = "info"
+
+[[proxies]]
+name = "gitpolar-http"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 80
+customDomains = ["gitpolar.120-77-59-48.sslip.io"]
+transport.bandwidthLimit = "200KB"
+transport.bandwidthLimitMode = "server"
+
+[[proxies]]
+name = "gitpolar-https"
+type = "https"
+localIP = "127.0.0.1"
+localPort = 443
+customDomains = ["gitpolar.120-77-59-48.sslip.io"]
+transport.bandwidthLimit = "200KB"
+transport.bandwidthLimitMode = "server"

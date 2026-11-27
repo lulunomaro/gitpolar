@@ -1,10 +1,11 @@
 import { db,repository } from './store.mjs';
-import { namespace,origin } from './config.mjs';
+import { namespace } from './config.mjs';
+import { requestOrigin, isApplicationOrigin } from './request-origin.mjs';
 import { fail } from './auth.mjs';
 import { git,namePattern,filePath,fileMeta,resolveRef } from './git.mjs';
 
 export function repositoryIdentity(repo) {
-  return {id:repo.id,name:repo.name,namespace,cloneUrl:new URL('/'+namespace+'/'+repo.name+'.git',origin).href,apiUrl:'/api/repos/'+repo.name};
+  return {id:repo.id,name:repo.name,namespace,cloneUrl:new URL('/'+namespace+'/'+repo.name+'.git',requestOrigin()).href,apiUrl:'/api/repos/'+repo.name};
 }
 
 function documentOptions(values) {
@@ -33,7 +34,7 @@ function remoteRepository(remote) {
   if(!remote || typeof remote!=='object' || Array.isArray(remote)||typeof remote.name!=='string'||!remote.name||remote.name.length>100||typeof remote.url!=='string'||!remote.url||remote.url.length>4096)fail(400,'Each remote requires a name and URL.');
   let url;try{url=new URL(remote.url);}catch{return null;}
   if(url.username||url.password||url.search||url.hash)fail(400,'Remote URLs must not contain credentials, query parameters or fragments.');
-  if(!['http:','https:'].includes(url.protocol)||url.origin!==origin.origin)return null;
+  if(!['http:','https:'].includes(url.protocol)||!isApplicationOrigin(url.origin))return null;
   let path;try{path=decodeURIComponent(url.pathname);}catch{fail(400,'Invalid remote URL path.');}
   const segments=path.replace(/\/$/,'').split('/');
   if(segments.length!==3||segments[1]!==namespace)return null;

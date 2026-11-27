@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
   --ink: #1f2328; --muted: #59636e; --line: #d1d9e0; --soft-line: #e2e7eb; --bg: #f6f8fa;
-  --link: #0969da; --green: #1a7f37; --orange: #fd8c73; --danger: #b4232d;
+  --link: #245bdb; --green: #1a7f37; --orange: #3370ff; --danger: #b4232d;
   font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", "Noto Sans CJK SC", Helvetica, Arial, sans-serif;
   color: var(--ink); background: white;
 }
@@ -48,8 +48,8 @@ h3 { font-size: 14px; font-weight: 600; }
 .actions, .buttons, .toolbar, .viewer-tools, .form-foot, .subline, .check-row { flex-wrap: wrap; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 33px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: #252a30; font-weight: 550; font-size: 13px; line-height: 1.45; text-decoration: none; box-shadow: 0 1px 0 #1f23280a; }
 .btn:hover:not(:disabled), a.btn:hover { background: #eff2f5; text-decoration: none; }
-.btn.primary { color: white; background: #1f883d; border-color: #197935; }
-.btn.primary:hover:not(:disabled) { background: var(--green); }
+.btn.primary { color: white; background: #245bdb; border-color: transparent; }
+.btn.primary:hover:not(:disabled) { background: #1c4cbd; }
 .btn.danger { color: var(--danger); }
 .btn[aria-pressed=true] { background: #ddf4ff; border-color: #7db7ef; color: #0550ae; }
 .btn.compact { font-size: 12px; min-height: 28px; padding: 3px 9px; }
@@ -153,6 +153,17 @@ td { font-size: 13px; }
 dialog { color: var(--ink); border: 1px solid var(--line); border-radius: 9px; padding: 0; width: min(950px, calc(100vw - 28px)); max-height: calc(100dvh - 28px); box-shadow: 0 12px 40px #24292f26; }
 dialog::backdrop { background: #1f23285c; }
 dialog .viewer-stage { height: clamp(240px, 42vh, 490px); }
+@media (min-width: 841px) {
+  body:has(#tabs:not([hidden])) { padding-left: 156px; }
+  .masthead:has(#tabs:not([hidden])) .brand { position: fixed; z-index: 4; top: 0; left: 0; width: 156px; height: 56px; padding: 0 12px; color: #fff; }
+  .masthead:has(#tabs:not([hidden])) .divider { display: none; }
+  .masthead .topline { min-height: 48px; }
+  .masthead #tabs:not([hidden]) { position: fixed; z-index: 3; inset: 0 auto 0 0; display: flex; width: 156px; max-width: none; margin: 0; padding: 64px 8px 12px; flex-direction: column; gap: 4px; overflow-y: auto; background: #465069; }
+  .masthead #tabs a { min-height: 32px; padding: 5px 10px; border: 0; border-radius: 8px; color: #fff; }
+  .masthead #tabs a:hover { background: rgba(255,255,255,.12); }
+  .masthead #tabs a[aria-current="page"] { background: rgba(255,255,255,.2); }
+  .masthead #tabs .ico { color: inherit; }
+}
 @media (max-width: 840px) {
   .layout, .machine-layout { grid-template-columns: 1fr; }
   .layout { gap: 14px; }

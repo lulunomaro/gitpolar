@@ -611,3 +611,46 @@ test('two workers safely migrate legacy sessions and cannot demote the final adm
     }
   } finally { await Promise.all(workers.map(server => server.stop())); }
 });
+
+
+test('origin aliases isolate cookies, CSRF, repository identity and LFS addresses', {timeout:30000}, async t => {
+  const directory=await mkdtemp(join(tmpdir(),'gitpolar-origins-'));
+  const external='https://relay.gitpolar.test', internal='http://lan.gitpolar.test';
+  const server=await launch(directory,{APP_ORIGIN_ALIASES:external+','+internal});
+  t.after(()=>server.stop());
+  const setup=await request(server,'/api/setup',{method:'POST',body:{username:'admin',password:'origin-test-password'}});
+  assert.equal(setup.status,201);
+  const cookie=setup.cookie;
+  assert(!setup.response.headers.get('set-cookie').includes('; Secure'));
+  const tokenResult=await request(server,'/api/tokens',{method:'POST',cookie,body:{name:'origin test'}});
+  const token=tokenResult.value.token;
+  assert.equal((await request(server,'/api/repos',{method:'POST',token,body:{name:'origin-test'}})).status,201);
+  const requestAtHost=(host,origin,path,options={})=>new Promise((resolve,reject)=>{
+    const bytes=options.body?JSON.stringify(options.body):'';
+    const req=httpRequest({hostname:'127.0.0.1',port:server.port,path,method:options.method||'GET',headers:{host,origin,...(bytes?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(bytes)}:{}),...(options.cookie?{Cookie:options.cookie}:{}),...(options.token?{Authorization:'Bearer '+options.token}:{}),...options.headers}},res=>{const chunks=[];res.on('data',chunk=>chunks.push(chunk));res.on('end',()=>{const text=Buffer.concat(chunks).toString();let value;try{value=JSON.parse(text)}catch{value=text}resolve({status:res.statusCode,value,cookie:res.headers['set-cookie']?.[0]?.split(';')[0],response:{headers:new Headers(res.headers)}});});});
+    req.on('error',reject);req.end(bytes);
+  });
+  const aliasRequest=(path,options={})=>requestAtHost('relay.gitpolar.test',external,path,options);
+  const session=await aliasRequest('/api/session');
+  assert.equal(session.value.origin,external);
+  assert.equal(session.value.feishuCallbackUrl,external+'/auth/feishu/callback');
+  const signedIn=await aliasRequest('/api/login',{method:'POST',body:{username:'admin',password:'origin-test-password'}});
+  assert.equal(signedIn.status,200);
+  assert.match(signedIn.response.headers.get('set-cookie'),/; Secure/);
+  assert.equal((await aliasRequest('/api/tokens',{method:'POST',cookie:signedIn.cookie,body:{name:'external browser'}})).status,201);
+  assert.equal((await aliasRequest('/api/tokens',{method:'POST',cookie:signedIn.cookie,body:{name:'wrong origin'},headers:{origin:server.origin}})).status,403);
+  const lanLogin=await requestAtHost('lan.gitpolar.test',internal,'/api/login',{method:'POST',body:{username:'admin',password:'origin-test-password'}});
+  assert.equal(lanLogin.status,200);
+  assert(!lanLogin.response.headers.get('set-cookie').includes('; Secure'));
+  const batch=await aliasRequest('/polar-lab/origin-test.git/info/lfs/objects/batch',{method:'POST',token,body:{operation:'upload',objects:[{oid:'a'.repeat(64),size:8}]}});
+  assert.equal(batch.status,200);
+  assert.equal(new URL(batch.value.objects[0].actions.upload.href).origin,external);
+  const resolved=await aliasRequest('/api/repository-context/resolve',{method:'POST',token,body:{remotes:[{name:'lan',url:server.origin+'/polar-lab/origin-test.git'},{name:'external',url:external+'/polar-lab/origin-test.git'}]}});
+  assert.equal(resolved.status,200);assert.equal(resolved.value.resolved,true);
+  assert.equal(new URL(resolved.value.repository.cloneUrl).origin,external);
+  assert.deepEqual(resolved.value.matchedRemotes,['lan','external']);
+  const concurrent=await Promise.all(Array.from({length:12},(_,i)=>i%2?aliasRequest('/api/session'):request(server,'/api/session')));
+  concurrent.forEach((response,i)=>assert.equal(response.value.origin,i%2?external:server.origin));
+  const spoofed=await requestAtHost('evil.invalid',server.origin,'/api/session',{headers:{'x-forwarded-host':'relay.gitpolar.test','x-forwarded-proto':'https'}});
+  assert.equal(spoofed.value.origin,server.origin);
+});

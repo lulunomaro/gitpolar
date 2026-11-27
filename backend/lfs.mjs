@@ -5,7 +5,8 @@ import { join,dirname } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { db,now } from './store.mjs';
-import { lfsRoot,origin,namespace,maxLfsBytes } from './config.mjs';
+import { lfsRoot,namespace,maxLfsBytes } from './config.mjs';
+import { requestOrigin } from './request-origin.mjs';
 import { requireAuth,body,fail } from './auth.mjs';
 import { filePath } from './git.mjs';
 
@@ -54,7 +55,7 @@ export async function lfs(req,res,repo,suffix,searchParams,changed=()=>{}) {
       }
       if(record && record.size!==size){objects.push({oid,size,error:{code:422,message:'LFS object size does not match its recorded hash.'}});continue;}
       const exists=record?.complete && (await stat(objectPath(repo,oid)).catch(()=>null))?.size===size;
-      const href=new URL(`/${namespace}/${repo.name}.git/info/lfs/objects/${oid}`,origin).href;
+      const href=new URL(`/${namespace}/${repo.name}.git/info/lfs/objects/${oid}`,requestOrigin()).href;
       if(upload) {
         objects.push({oid,size,authenticated:true,...(!exists?{actions:{upload:{href,header:{...(req.headers.authorization?{Authorization:req.headers.authorization}:{})}},verify:{href:href+'/verify',header:{...(req.headers.authorization?{Authorization:req.headers.authorization}:{})}}}}:{})});
       } else if(exists) objects.push({oid,size,authenticated:true,actions:{download:{href,header:{...(req.headers.authorization?{Authorization:req.headers.authorization}:{})}}}});
