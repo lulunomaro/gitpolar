@@ -77,10 +77,21 @@ export async function branches(repo) {
   return result.trimEnd().split('\n').filter(Boolean).map(line=>{const[name,oid,date,author,message]=line.split('\0');return {name,oid,date,author,message};});
 }
 
+export async function tags(repo) {
+  const result = await git(repo.name, ['for-each-ref', '--sort=-creatordate',
+    '--format=%(refname:strip=2)%00%(objectname)%00%(*objectname)%00%(creatordate:iso-strict)%00%(subject)%00%(objecttype)%00%(*objecttype)', 'refs/tags/']);
+  return result.trimEnd().split('\n').filter(Boolean).flatMap((line) => {
+    const [name, object, peeled, date, message, type, peeledType] = line.split('\0');
+    // Only commit tags can be browsed as repository snapshots.
+    if (type !== 'commit' && peeledType !== 'commit') return [];
+    return [{name, oid: type === 'commit' ? object : peeled, date, message}];
+  });
+}
+
 export async function branchOverview(repo) {
-  const refs=await branches(repo);
+  const [refs, tagList] = await Promise.all([branches(repo), tags(repo)]);
   const head=(await git(repo.name,['symbolic-ref','--short','HEAD'],{allowFailure:true})).trim()||'main';
-  return {branches:refs,defaultBranch:refs.some(b=>b.name===head)?head:refs[0]?.name||head};
+  return {branches:refs,tags:tagList,defaultBranch:refs.some(b=>b.name===head)?head:refs[0]?.name||head};
 }
 export async function createBranch(repo,name,from,userId) {
   if(typeof name!=='string'||!name||name.length>255||name.startsWith('-')||name==='HEAD')fail(400,'Invalid branch name.');
@@ -116,7 +127,7 @@ export async function resolveRef(repo,ref='main') {
   if(/^[0-9a-f]{40}$/.test(ref)) {
     try{return await remember(commitIds,repo.id+':'+ref,async()=>(await git(repo.name,['rev-parse','--verify','--end-of-options',`${ref}^{commit}`])).trim(),128);}catch{fail(404,'Commit not found.');}
   }
-  for(const prefix of ['refs/heads/','refs/tags/']) {
+  for(const prefix of /^(refs\/heads\/|refs\/tags\/)/.test(ref) ? [''] : ['refs/heads/','refs/tags/']) {
     const oid=(await git(repo.name,['rev-parse','--verify','--end-of-options',`${prefix}${ref}^{commit}`],{allowFailure:true})).trim();
     if(/^[0-9a-f]{40}$/.test(oid)) return oid;
   }
@@ -128,13 +139,13 @@ export async function commitInfo(repo,ref,path) {
   return {hash:oid?.slice(0,7),oid,author,date,message};
 }
 export async function describe(repo,userId) {
-  const refs=await branches(repo);
+  const [refs, tagList] = await Promise.all([branches(repo), tags(repo)]);
   let defaultBranch=(await git(repo.name,['symbolic-ref','--short','HEAD'],{allowFailure:true})).trim() || 'main';
   if(refs.length && !refs.some(b=>b.name===defaultBranch)) defaultBranch=refs[0].name;
   const commit=refs.length?await commitInfo(repo,defaultBranch):{author:'',message:'Empty repository',date:repo.created_at,hash:''};
   const prefs=db.prepare('SELECT kind FROM preferences WHERE user_id=? AND repo_id=?').all(userId,repo.id).map(r=>r.kind);
   const b=Object.fromEntries(refs.filter(r=>r.name!=='main').map(r=>[r.name,{oid:r.oid}]));
-  return {...repo,owner:namespace,creator:getUser(repo.creator_id),albumUrl:repo.kind==='album'?'/albums/?repo='+encodeURIComponent(repo.name):null,visibility:'Internal',defaultBranch,empty:!refs.length,branchList:refs,branches:b,commit,updated:commit.date,language:repo.kind==='album'?'Photos':'Files',tone:'blue',files:[],starred:prefs.includes('star'),watched:prefs.includes('watch'),starCount:db.prepare("SELECT count(*) AS n FROM preferences WHERE repo_id=? AND kind='star'").get(repo.id).n};
+  return {...repo,owner:namespace,creator:getUser(repo.creator_id),albumUrl:repo.kind==='album'?'/albums/?repo='+encodeURIComponent(repo.name):null,visibility:'Internal',defaultBranch,empty:!refs.length,branchList:refs,tagList,branches:b,commit,updated:commit.date,language:repo.kind==='album'?'Photos':'Files',tone:'blue',files:[],starred:prefs.includes('star'),watched:prefs.includes('watch'),watchCount:db.prepare("SELECT count(*) AS n FROM preferences WHERE repo_id=? AND kind='watch'").get(repo.id).n,starCount:db.prepare("SELECT count(*) AS n FROM preferences WHERE repo_id=? AND kind='star'").get(repo.id).n};
 }
 export async function tree(repo,ref,path='') {
   filePath(path,true);
@@ -172,21 +183,22 @@ export async function fileContent(repo,ref,path) {
   return {...entry,binary,...(!binary?{text:bytes.toString('utf8')}:{} )};
 }
 export async function browse(repo,ref,path='') {
-  const refs=await branches(repo);
-  if(!refs.length) return {empty:true,ref:'main',path:'',entries:[],branches:[],commit:{author:'',message:'Empty repository'}};
+  const [refs, tagList] = await Promise.all([branches(repo), tags(repo)]);
+  if(!refs.length && !tagList.length) return {empty:true,ref:'main',path:'',entries:[],branches:[],tags:[],commit:{author:'',message:'Empty repository'}};
   const oid=await resolveRef(repo,ref),commit=await commitInfo(repo,oid);
   let file;
   if(path) { try {file=await fileContent(repo,oid,path);}catch(error){if(error.status!==404)throw error;} }
   let entries;
   try {entries=file?[]:await tree(repo,oid,path);}
-  catch(error) {if(error.status!==404)throw error;return {ref,oid,path,missing:true,branches:refs,commit,entries:[],locks:[]};}
+  catch(error) {if(error.status!==404)throw error;return {ref,oid,path,missing:true,branches:refs,tags:tagList,commit,entries:[],locks:[]};}
   const enriched=[];
   for(let offset=0;offset<entries.length;offset+=8) enriched.push(...await Promise.all(entries.slice(offset,offset+8).map(async e=>({...e,lastCommit:await commitInfo(repo,oid,e.path)}))));
   let readme=null;
   const readmeName=entries.find(e=>e.type==='blob' && /^readme\.md$/i.test(e.name));
   if(readmeName) readme=await fileContent(repo,oid,readmeName.path);
   const locks=db.prepare('SELECT l.id,l.path,l.locked_at,u.username AS owner FROM locks l JOIN users u ON u.id=l.owner_id WHERE l.repo_id=? ORDER BY l.locked_at').all(repo.id);
-  return {ref,oid,path,file,entries:enriched,readme,branches:refs,commit,locks};
+  const commitCount = Number((await git(repo.name,['rev-list','--count',oid])).trim());
+  return {ref,oid,path,file,entries:enriched,readme,branches:refs,tags:tagList,commit,commitCount,locks};
 }
 export async function commitFiles(repo,user,branch,files,message,expectedHead) {
   const restriction = albumRefError(repo,'refs/heads/'+branch,user.id);

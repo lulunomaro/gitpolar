@@ -37,3 +37,5 @@
 ## 验证
 
 `npm test` 包含资料、账号独立预设、真实贡献、关注和静态资源回归。安装 Python Pillow、Playwright Chromium 后，可运行 `python tests/interface-workspace.e2e.py`，验证真实页面的资料更新、仓库置顶、原版恢复、深浅主题、Git Graph、采购、后台和移动视口。截图写入忽略目录 `artifacts/interface-ui/`。
+
+详细的 10 轮对照、验证及尚存差异见 [GitHub 预设审查记录](GITHUB-PRESET-AUDIT.md)。分支选择器支持 Branches / Tags 和键盘选择，相册 PR 可从 Dashboard 或仓库 Pull requests 直接进入审核。

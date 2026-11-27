@@ -650,6 +650,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 
+# Mona Sans
+
+Copyright 2022 The Mona Sans Project Authors. Source: https://github.com/github/mona-sans.
+The bundled variable webfont is distributed under the SIL Open Font License 1.1.
+Full copyright and license text: `assets/fonts/MonaSans-OFL.txt`.
+
 # read-excel-file
 
 MIT License

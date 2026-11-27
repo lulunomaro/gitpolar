@@ -44,6 +44,8 @@ const localDay = (value) =>
 
 async function contributionActivity(user, year, repositories) {
   const activity = [];
+  const start = new Date(`${year}-01-01T00:00:00+08:00`).toISOString();
+  const end = new Date(Date.UTC(Number(year) + 1, 0, 1) - 8 * 3600000).toISOString();
   const names = new Set(
     [user.username, user.name, profile(user.id).display_name].filter(Boolean).map((n) => n.toLowerCase())
   );
@@ -56,8 +58,8 @@ async function contributionActivity(user, year, repositories) {
           [
             'log',
             '--all',
-            `--since=${year}-01-01T00:00:00+14:00`,
-            `--until=${year}-12-31T23:59:59-12:00`,
+            // Git log's date limits filter committer dates. Contributions use author dates,
+            // so filter the recorded author day below even for rebased/imported commits.
             '--format=%H%x00%aI%x00%an%x00%ae%x00%s',
             '-8000',
           ],
@@ -67,7 +69,9 @@ async function contributionActivity(user, year, repositories) {
           events = [];
         for (const line of text.trim().split('\n')) {
           const [oid, date, author, email, message] = line.split('\0');
-          if (!date?.startsWith(year + '-') || seen.has(oid)) continue;
+          if (!date || seen.has(oid)) continue;
+          const day = localDay(date);
+          if (!day.startsWith(year + '-')) continue;
           if (
             !names.has(author.toLowerCase()) &&
             email.toLowerCase() !== handle + '@gitpolar.local' &&
@@ -75,7 +79,7 @@ async function contributionActivity(user, year, repositories) {
           )
             continue;
           seen.add(oid);
-          events.push({ type: 'commit', repo: repo.name, oid, date: localDay(date), message });
+          events.push({ type: 'commit', repo: repo.name, oid, date: day, message });
         }
         return events;
       })
@@ -84,9 +88,9 @@ async function contributionActivity(user, year, repositories) {
   }
   const issues = db
     .prepare(
-      `SELECT i.number,i.title,i.created_at,r.name FROM issues i JOIN repos r ON r.id=i.repo_id WHERE i.author_id=? AND r.status='ready' AND i.created_at LIKE ?`
+      `SELECT i.number,i.title,i.created_at,r.name FROM issues i JOIN repos r ON r.id=i.repo_id WHERE i.author_id=? AND r.status='ready' AND i.created_at>=? AND i.created_at<?`
     )
-    .all(user.id, year + '-%');
+    .all(user.id, start, end);
   activity.push(
     ...issues.map((i) => ({
       type: 'issue',
@@ -200,7 +204,7 @@ export async function interfaceApi(req, res, path, params) {
         .all(user.id),
     });
   }
-  const year = params.get('year') || String(new Date().getFullYear());
+  const year = params.get('year') || localDay(new Date()).slice(0, 4);
   if (!/^\d{4}$/.test(year) || Number(year) < 1970 || Number(year) > 9999) fail(400, '无效年份。');
   const repositories = current.personalOnly
     ? []

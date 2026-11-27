@@ -420,5 +420,5 @@ export function setupPulls({ api, getRepo, getActivity, afterChange }) {
     }
     root.append(reasonLabel, actions, status);
   }
-  return { upload, edit, list };
+  return { upload, edit, list, showReview };
 }

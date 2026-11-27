@@ -46,6 +46,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   let ticketState = 'open';
   let feedKind = 'all';
   let session = null;
+  let catalogReady = false;
   let workbench = null;
   let uploadingFiles = false;
   let toastTimer;
@@ -77,6 +78,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       const previousUser = session?.user?.id;
       session = await api('session'); updateAccount();
       if (previousUser !== session.user?.id) {
+        catalogReady = false;
         window.GitpolarGithub?.invalidate();
         workbench = null; repos.length = tickets.length = activity.length = 0; browseCache.clear();
         if (liveEvents) { liveEvents.close(); liveEvents = null; }
@@ -98,6 +100,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
         watched = repos.filter(r=>r.watched).map(r=>r.name);
         activity.splice(0,activity.length,...tickets.slice(0,6).map(t=>({repo:t.repo,kind:'issues',id:t.id})));
       } else {repos.length=0;tickets.length=0;activity.length=0;if(liveEvents){liveEvents.close();liveEvents=null;}}
+      catalogReady=true;
       window.GitpolarGithub?.invalidate();
       backendError='';render();
       if(session.user && !session.user.personalOnly && !liveEvents) {
@@ -125,6 +128,8 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     if (session?.user && window.GitpolarGithub?.isGithub()) {
       const user=session.user;
       openDialog(user.name || user.username, `<div class="account-menu gh-account-menu"><p>Signed in as <strong>${escape(user.username)}</strong></p><a href="#/profile">${icon('person')}Your profile</a><a href="#/profile/repositories">${icon('repo')}Your repositories</a><a href="#/profile/stars">${icon('star')}Your stars</a><a href="#/files">${icon('file')}Your files</a>${!user.personalOnly?`<a href="/albums/">${icon('book')}活动相册</a><a href="/procurement/">${icon('project')}采购与库存</a>`:''}<hr><a href="#/settings/appearance">${icon('gear')}Appearance</a><a href="#/settings/profile">${icon('person')}Settings</a><button data-action="access-tokens">${icon('lock')}Personal access tokens</button>${user.role==='admin'?`<a href="/admin/">${icon('gear')}管理后台</a>`:''}<hr><button data-action="logout">${icon('sign-out')}Sign out</button></div>`,'is-account-menu');
+      dialog.querySelector('#dialog-title').innerHTML=`<span class="gh-account-identity">${avatar(user.username,'large')}<span><strong>${escape(user.username)}</strong><small>${escape(user.name||'')}</small></span></span>`;
+      document.querySelector('.account-trigger').setAttribute('aria-expanded','true');
       return;
     }
 
@@ -161,7 +166,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   const directories=new Map(), preferences=new Map();
   let active=null, branchState=null, branchRequest=0;
   const compareHref=(repo,head,filePath='',base='')=>'#/repos/'+encodeURIComponent(repo.name)+'/compare?'+new URLSearchParams({head,...(base?{base}:{}),...(filePath?{path:filePath}:{})});
-  const stateFor=repo=>{if(!preferences.has(repo.name))preferences.set(repo.name,{expanded:new Set(),scroll:0,collapsed:false});return preferences.get(repo.name);};
+  const stateFor=repo=>{if(!preferences.has(repo.name))preferences.set(repo.name,{expanded:new Set(),scroll:0,collapsed:false,userSet:false});const state=preferences.get(repo.name);if(!state.userSet)state.collapsed=Boolean(window.GitpolarGithub?.isGithub()&&!repo.live?.path);return state;};
   const cacheKey=(ctx,folder)=>JSON.stringify([ctx.repo.name,ctx.oid,folder]);
   function dispose(){if(active){active.state.scroll=active.scroll.scrollTop;active=null;}}
   function branchCompareHref(repo,data,currentPath='') {
@@ -170,8 +175,28 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     return compareHref(repo,data.oid||ref,currentPath,ref!==repo.defaultBranch?repo.defaultBranch:'');
   }
   function controls(repo,data) {
-    const ref=data.ref||repo.defaultBranch,currentPath=data.path||'',refs=data.branches||repo.branchList||[],isBranch=refs.some(b=>b.name===ref);
-    return `<button class="button tree-visibility" data-nav-action="toggle-sidebar" aria-label="显示或隐藏文件目录树" aria-expanded="${!stateFor(repo).collapsed}">${icon('three-bars')}<span>Files</span></button><details class="branch-picker"><summary class="button" title="${escape(ref)}" aria-label="切换分支：${escape(ref)}">${icon(isBranch?'git-branch':'git-commit')}<span>${escape(isBranch?ref:ref.slice(0,7))}</span>${icon('chevron-down',12)}</summary><div class="branch-picker-panel"><div class="branch-picker-heading">切换分支</div><div class="branch-picker-search"><input class="form-input" type="search" data-branch-filter aria-label="搜索分支" placeholder="Find a branch…" autocomplete="off"></div><nav class="branch-picker-list" aria-label="仓库分支">${refs.map(b=>`<a class="branch-option" data-branch-name="${escape(b.name)}" href="${escape(repoHref(repo.name,'code',b.name,currentPath))}"${b.name===ref?' aria-current="true"':''}>${icon(b.name===ref?'check':'git-branch')}<span>${escape(b.name)}</span>${b.name===repo.defaultBranch?'<span class="label">default</span>':''}</a>`).join('')}<p class="branch-no-results" hidden>没有匹配的分支。</p></nav><div class="branch-picker-footer"><button data-nav-action="branches" data-repo="${escape(repo.name)}" data-ref="${escape(ref)}" data-path="${escape(currentPath)}">${icon('git-branch')}查看所有分支</button>${session.user.role!=='reader'?`<button data-nav-action="new-branch" data-repo="${escape(repo.name)}" data-ref="${escape(data.oid||ref)}" data-path="${escape(currentPath)}">${icon('plus')}新建分支</button>`:''}</div></div></details><button class="branch-count" data-nav-action="branches" data-repo="${escape(repo.name)}" data-ref="${escape(ref)}" data-path="${escape(currentPath)}">${icon('git-branch')}<strong>${refs.length}</strong><span>Branches</span></button>`;
+    const ref=data.ref||repo.defaultBranch,currentPath=data.path||'',refs=data.branches||repo.branchList||[],tagList=data.tags||repo.tagList||[];
+    const isBranch=refs.some(b=>b.name===ref),isTag=tagList.some(t=>'refs/tags/'+t.name===ref);
+    const label=isTag?ref.slice(10):isBranch?ref:ref.slice(0,7),activeKind=isTag?'tags':'branches';
+    const options=(items,kind)=>items.map(b=>{
+      const value=kind==='tags'?'refs/tags/'+b.name:b.name,selected=value===ref;
+      return `<a class="branch-option" role="menuitemradio" aria-checked="${selected}" data-branch-name="${escape(b.name)}" data-ref-kind="${kind}" href="${escape(repoHref(repo.name,'code',value,currentPath))}"${selected?' aria-current="true"':''}${kind!==activeKind?' hidden':''}>${icon(selected?'check':kind==='tags'?'tag':'git-branch')}<span>${escape(b.name)}</span>${kind==='branches'&&b.name===repo.defaultBranch?'<span class="label">default</span>':''}</a>`;
+    }).join('');
+    const attributes=`data-repo="${escape(repo.name)}" data-ref="${escape(ref)}" data-path="${escape(currentPath)}"`;
+    return `<button class="button tree-visibility" data-nav-action="toggle-sidebar" aria-label="显示或隐藏文件目录树" aria-expanded="${!stateFor(repo).collapsed}">${icon('three-bars')}<span>Files</span></button><details class="branch-picker"><summary class="button" title="${escape(label)}" aria-expanded="false" aria-label="切换分支或标签：${escape(label)}">${icon(isTag?'tag':isBranch?'git-branch':'git-commit')}<span>${escape(label)}</span>${icon('chevron-down',12)}</summary><div class="branch-picker-panel" data-ref-tab="${activeKind}"><div class="branch-picker-heading"><span>Switch branches/tags</span><button type="button" data-nav-action="close-picker" aria-label="Cancel">${icon('x')}</button></div><div class="branch-picker-search"><input class="form-input" type="search" data-branch-filter aria-label="${isTag?'Find a tag':'Find a branch'}" placeholder="${isTag?'Find a tag…':'Find a branch…'}" autocomplete="off"></div><div class="branch-picker-tabs" role="tablist" aria-label="Reference type"><button type="button" role="tab" data-nav-action="ref-tab" data-kind="branches" aria-selected="${!isTag}" tabindex="${isTag?-1:0}">Branches</button><button type="button" role="tab" data-nav-action="ref-tab" data-kind="tags" aria-selected="${isTag}" tabindex="${isTag?0:-1}">Tags</button></div><nav class="branch-picker-list" role="menu" aria-label="Branches and tags">${options(refs,'branches')}${options(tagList,'tags')}<p class="branch-no-results"${(isTag?tagList:refs).length?' hidden':''}>${isTag?'No tags found.':'No branches found.'}</p></nav><div class="branch-picker-footer"><button data-nav-action="branches" data-ref-footer="branches" ${attributes}${isTag?' hidden':''}>View all branches</button><button data-nav-action="tags" data-ref-footer="tags" ${attributes}${isTag?'':' hidden'}>View all tags</button>${session.user.role!=='reader'?`<button data-nav-action="new-branch" data-repo="${escape(repo.name)}" data-ref="${escape(data.oid||ref)}" data-path="${escape(currentPath)}">${icon('plus')}New branch</button>`:''}</div></div></details><button class="branch-count" data-nav-action="branches" ${attributes}>${icon('git-branch')}<strong>${refs.length}</strong><span>Branches</span></button><button class="branch-count" data-nav-action="tags" ${attributes}>${icon('tag')}<strong>${tagList.length}</strong><span>Tags</span></button>`;
+  }
+  function filterRefs(panel) {
+    const query=panel.querySelector('[data-branch-filter]').value.toLowerCase(),kind=panel.dataset.refTab;
+    let matches=0;
+    panel.querySelectorAll('[data-branch-name]').forEach(link=>{link.hidden=link.dataset.refKind!==kind||!link.dataset.branchName.toLowerCase().includes(query);if(!link.hidden)matches++;});
+    const empty=panel.querySelector('.branch-no-results');empty.hidden=matches>0;empty.textContent=kind==='tags'?'No tags found.':'No branches found.';
+  }
+  async function showTags(repo,currentPath='') {
+    const request=++branchRequest;openDialog('Tags','<p role="status">Loading tags…</p>','is-branches');
+    try {
+      const data=await api('repos/'+repo.name+'/branches');if(request!==branchRequest||!dialog.open||!dialog.classList.contains('is-branches'))return;
+      openDialog('Tags',`<div class="branch-manager-list">${data.tags.length?data.tags.map(t=>`<article class="branch-list-row"><div class="branch-list-info">${icon('tag')}<div><a class="branch-browse" href="${escape(repoHref(repo.name,'code','refs/tags/'+t.name,currentPath))}">${escape(t.name)}</a><p>${escape(t.message)}<small>${escape(relativeTime(t.date))} · <code>${t.oid.slice(0,7)}</code></small></p></div></div><a class="button small" download href="${escape(archiveUrl(repo,t.oid))}">ZIP</a></article>`).join(''):'<p class="empty">No tags have been pushed to this repository.</p>'}</div>`,'is-branches');
+    } catch(error){notify(error.message);}
   }
   function workspace(repo,content) {
     const data=repo.live,state=stateFor(repo);
@@ -236,22 +261,32 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     if(event.target.closest('.branch-browse'))dialog.close();
     const button=event.target.closest('[data-nav-action]');if(!button)return;
     const {navAction,repo:name,ref,path:currentPath='',name:branchName,oid}=button.dataset,repo=repos.find(r=>r.name===name);
-    if(navAction==='toggle-sidebar'&&active){const workspace=active.target.closest('.repo-workspace');if(matchMedia('(max-width: 900px)').matches){workspace.classList.toggle('tree-open');button.setAttribute('aria-expanded',workspace.classList.contains('tree-open'));}else{active.state.collapsed=!active.state.collapsed;workspace.classList.toggle('tree-collapsed',active.state.collapsed);button.setAttribute('aria-expanded',!active.state.collapsed);}}
+    if(navAction==='toggle-sidebar'&&active){active.state.userSet=true;const workspace=active.target.closest('.repo-workspace');if(matchMedia('(max-width: 900px)').matches){workspace.classList.toggle('tree-open');button.setAttribute('aria-expanded',workspace.classList.contains('tree-open'));}else{active.state.collapsed=!active.state.collapsed;workspace.classList.toggle('tree-collapsed',active.state.collapsed);button.setAttribute('aria-expanded',!active.state.collapsed);}}
     if(navAction==='collapse-tree'&&active){active.state.expanded.clear();draw(active);}
     if(navAction==='toggle-directory'&&active){const expanded=active.state.expanded;expanded.has(currentPath)?expanded.delete(currentPath):expanded.add(currentPath);draw(active);active.target.querySelectorAll('[data-nav-action="toggle-directory"]').forEach(b=>{if(b.dataset.path===currentPath)b.focus({preventScroll:true});});}
     if(navAction==='retry-tree'&&active){directories.delete(cacheKey(active,currentPath));draw(active);}
     if(navAction==='more-tree'&&active){active.limits.set(currentPath,(active.limits.get(currentPath)||100)+100);draw(active);}
+    if(navAction==='close-picker'){const picker=button.closest('.branch-picker');picker.open=false;picker.querySelector('summary').focus();}
+    if(navAction==='ref-tab'){const panel=button.closest('.branch-picker-panel');panel.dataset.refTab=button.dataset.kind;panel.querySelectorAll('[role=tab]').forEach(t=>{t.setAttribute('aria-selected',String(t===button));t.tabIndex=t===button?0:-1;});const input=panel.querySelector('[data-branch-filter]');input.value='';input.placeholder=button.dataset.kind==='tags'?'Find a tag…':'Find a branch…';input.setAttribute('aria-label',button.dataset.kind==='tags'?'Find a tag':'Find a branch');panel.querySelectorAll('[data-ref-footer]').forEach(f=>f.hidden=f.dataset.refFooter!==button.dataset.kind);filterRefs(panel);}
+    if(navAction==='tags'&&repo)showTags(repo,currentPath);
     if(navAction==='branches'&&repo)showBranches(repo,ref,currentPath);
     if(navAction==='new-branch'&&repo)newBranch(repo,ref||repo.defaultBranch,currentPath);
     if(navAction==='confirm-delete-branch'&&branchState){openDialog('Delete branch',`<p>删除分支 <strong>${escape(branchName)}</strong>？</p><p class="dialog-note">请先比较并保留需要的改动，删除后将失去此分支的浏览入口。</p><div class="dialog-actions"><button class="button danger" data-nav-action="delete-branch" data-name="${escape(branchName)}" data-oid="${escape(oid)}">确认删除分支</button></div>`,'is-branches');}
     if(navAction==='delete-branch'&&branchState){const state=branchState;button.disabled=true;api('repos/'+state.repo.name+'/branches',{method:'DELETE',body:{name:branchName,expectedOid:oid}}).then(async()=>{browseCache.clear();await refreshLive();if(state.ref===branchName)location.hash=repoHref(state.repo.name,'code',state.defaultBranch,state.path);await showBranches(repos.find(r=>r.name===state.repo.name),state.ref===branchName?state.defaultBranch:state.ref,state.path);notify('分支已删除。');}).catch(error=>{button.disabled=false;notify(error.message);});}
   });
-  document.addEventListener('toggle',event=>{if(event.target.matches('.branch-picker')&&event.target.open)event.target.querySelector('input')?.focus();},true);
+  document.addEventListener('toggle',event=>{if(event.target.matches('.branch-picker')){event.target.querySelector('summary').setAttribute('aria-expanded',String(event.target.open));if(event.target.open)event.target.querySelector('input')?.focus();}},true);
   document.addEventListener('input',event=>{
-    if(event.target.matches('[data-branch-filter]')){const panel=event.target.closest('.branch-picker-panel'),query=event.target.value.toLowerCase();let matches=0;panel.querySelectorAll('[data-branch-name]').forEach(link=>{link.hidden=!link.dataset.branchName.toLowerCase().includes(query);if(!link.hidden)matches++;});panel.querySelector('.branch-no-results').hidden=matches>0;}
+    if(event.target.matches('[data-branch-filter]'))filterRefs(event.target.closest('.branch-picker-panel'));
     if(event.target.matches('[data-branch-manager-filter]')){const query=event.target.value.toLowerCase();let matches=0;dialog.querySelectorAll('[data-branch-row]').forEach(row=>{row.hidden=!row.dataset.branchRow.toLowerCase().includes(query);if(!row.hidden)matches++;});dialog.querySelector('.branch-no-results').hidden=matches>0;}
   });
-  document.addEventListener('keydown',event=>{if(event.key==='Escape')document.querySelectorAll('.branch-picker[open]').forEach(p=>p.open=false);if(event.key==='Enter'&&event.target.matches('[data-branch-filter]')){event.preventDefault();event.target.closest('.branch-picker-panel').querySelector('.branch-option:not([hidden])')?.click();}});
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape')document.querySelectorAll('.branch-picker[open]').forEach(p=>{p.open=false;p.querySelector('summary').focus();});
+    const panel=event.target.closest('.branch-picker-panel');if(!panel)return;
+    const options=Array.from(panel.querySelectorAll('.branch-option:not([hidden])'));
+    if(event.key==='Enter'&&event.target.matches('[data-branch-filter]')){event.preventDefault();options[0]?.click();}
+    if(['ArrowDown','ArrowUp'].includes(event.key)&&!event.target.matches('[role=tab]')){event.preventDefault();const index=options.indexOf(event.target),next=index<0?(event.key==='ArrowDown'?0:options.length-1):(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length;options[next]?.focus();}
+    if(['ArrowLeft','ArrowRight'].includes(event.key)&&event.target.matches('[role=tab]')){event.preventDefault();const other=panel.querySelector('[role=tab][aria-selected=false]');other.click();other.focus();}
+  });
   document.addEventListener('submit',async event=>{
     const form=event.target;if(form.id!=='branch-form')return;event.preventDefault();const submit=form.querySelector('[type="submit"]'),error=form.querySelector('[data-branch-error]'),values=new FormData(form);submit.disabled=true;error.hidden=true;
     try {const branch=await api('repos/'+form.dataset.repo+'/branches',{method:'POST',body:{name:values.get('name').trim(),from:values.get('from')}});browseCache.clear();dialog.close();await refreshLive();location.hash=repoHref(form.dataset.repo,'code',branch.name,form.dataset.path);notify('分支 '+branch.name+' 已创建。');}
@@ -265,7 +300,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     const tip=repo.branchList.find(b=>b.name===ref)?.oid||(/^[0-9a-f]{40}$/.test(ref)?ref:null);
     const key=JSON.stringify([repo.name,ref,path,tip||'empty']);
     if(browseCache.has(key)){repo.live=browseCache.get(key);return true;}
-    const placeholder={loading:true,ref,path,oid:tip,entries:[],branches:repo.branchList};
+    const placeholder={loading:true,ref,path,oid:tip,entries:[],branches:repo.branchList,tags:repo.tagList};
     browseCache.set(key,placeholder);repo.live=placeholder;
     const hash=location.hash;
     api('repos/'+repo.name+'/browse?'+new URLSearchParams({ref,path})).then(data=>{browseCache.set(key,data);if(location.hash===hash)render();}).catch(error=>{browseCache.set(key,{...placeholder,loading:false,error:error.message,status:error.status});if(location.hash===hash)render();});
@@ -293,8 +328,12 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     const url=`${location.origin}/${session.namespace}/${repo.name}.git`;
     if(data.empty)return `<section class="panel markdown"><h2>Quick setup</h2><p>创建了真实的空仓库。用 Git 推送提交后，页面会自动更新。</p><pre><code>git clone ${escape(url)}\ncd ${escape(repo.name)}\ngit add .\ngit commit -m "Initial commit"\ngit push -u origin main</code></pre><p>使用右上角头像 → Git access tokens 创建客户端密码。</p></section>`;
     const isBranch=data.branches.some(b=>b.name===ref);
-    const toolbar=`<div class="file-toolbar">${repositoryNavigation.controls(repo,data)}<div class="toolbar-end"><a class="button" href="${escape(repositoryNavigation.branchCompareHref(repo,data,data.file||data.missing?data.path:''))}">${icon('git-pull-request')}Compare</a><button class="button" data-action="cad-project" data-repo="${escape(repo.name)}" data-branch="${escape(snapshot)}">${icon('file-directory-fill')}SolidWorks</button>${session.user.role!=='reader'&&isBranch?`<button class="button" data-action="add-file" data-repo="${escape(repo.name)}" data-branch="${escape(ref)}">Add file</button>`:''}${liveCodeMenu(repo,snapshot)}</div></div>`;
-    const version=!isBranch?`<div class="version-banner">${icon('git-commit')}Viewing version <code>${escape(snapshot.slice(0,7))}</code><a href="${repoHref(repo.name,'code',repo.defaultBranch,data.path)}">Back to ${escape(repo.defaultBranch)}</a></div>`:'';
+    const compareLink=`<a class="button" href="${escape(repositoryNavigation.branchCompareHref(repo,data,data.file||data.missing?data.path:''))}">${icon('git-pull-request')}Compare</a>`;
+    const cadButton=`<button class="button" data-action="cad-project" data-repo="${escape(repo.name)}" data-branch="${escape(snapshot)}">${icon('file-directory-fill')}SolidWorks</button>`;
+    const navigationTools=window.GitpolarGithub?.isGithub()?`<button class="button gh-go-file" data-action="find-file" data-repo="${escape(repo.name)}" data-branch="${escape(ref)}" aria-label="Go to file">${icon('search')}<span>Go to file</span><kbd>t</kbd></button><details class="gh-list-filter gh-repo-tools"><summary class="button icon-button" aria-label="More repository tools">${icon('kebab-horizontal')}</summary><nav aria-label="Repository tools">${compareLink}<a href="${repoHref(repo.name,'graph')}">${icon('git-branch')}Git Graph</a>${cadButton}</nav></details>`:compareLink+cadButton;
+    const toolbar=`<div class="file-toolbar">${repositoryNavigation.controls(repo,data)}<div class="toolbar-end">${navigationTools}${session.user.role!=='reader'&&isBranch?`<button class="button" data-action="add-file" data-repo="${escape(repo.name)}" data-branch="${escape(ref)}">Add file</button>`:''}${liveCodeMenu(repo,snapshot)}</div></div>`;
+    const tagName=ref.startsWith('refs/tags/')?ref.slice(10):'';
+    const version=!isBranch?`<div class="version-banner">${icon('git-commit')}${tagName?'Viewing tag <strong>'+escape(tagName)+'</strong>':'Viewing version'} <code>${escape(snapshot.slice(0,7))}</code><a href="${repoHref(repo.name,'code',repo.defaultBranch,data.path)}">Back to ${escape(repo.defaultBranch)}</a></div>`:'';
     const paths=data.path.split('/').filter(Boolean);
     const breadcrumb=data.path?`<nav class="file-crumb"><a href="${repoHref(repo.name,'code',ref)}">${escape(repo.name)}</a>${paths.map((p,i)=>`<span>/</span><a href="${escape(repoHref(repo.name,'code',ref,paths.slice(0,i+1).join('/')))}">${escape(p)}</a>`).join('')}</nav>`:'';
     if(data.loading)return toolbar+version+breadcrumb+'<div class="panel empty" role="status">正在读取此版本的文件…</div>';
@@ -310,8 +349,11 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     }
     const parent=data.path?`<li><a class="file-row" href="${escape(repoHref(repo.name,'code',ref,paths.slice(0,-1).join('/')))}"><span class="file-name">${icon('arrow-left')}..</span></a></li>`:'';
     const commit=data.commit;
+    const github=window.GitpolarGithub?.isGithub();
+    const summary=github?`${avatar(commit.author,'small')}<strong>${escape(commit.author)}</strong><a class="summary-message" href="${escape('#/repos/'+repo.name+'/graph?'+new URLSearchParams({commit:snapshot}))}">${escape(commit.message)}</a><code class="summary-hash">${escape(commit.hash)}</code><time class="summary-date" datetime="${escape(commit.date)}">${escape(relativeTime(commit.date))}</time><button class="button small ghost" data-action="file-history" data-repo="${escape(repo.name)}" data-branch="${escape(snapshot)}" data-path="">${icon('history')}<strong>${data.commitCount??''}</strong> Commits</button>`:`${avatar(commit.author,'small')}<strong>${escape(commit.author)}</strong><span class="summary-message">${escape(commit.message)}</span><span class="summary-hash">${escape(commit.hash)}</span>${historyButton('')}`;
+    const tableHead=github?'<li class="file-table-heading"><span>Name</span><span>Last commit message</span><span>Last commit date</span></li>':'';
     const entries=[...data.entries].sort((a,b)=>Number(b.type==='tree')-Number(a.type==='tree')||a.name.localeCompare(b.name));
-    return `${toolbar}${version}${breadcrumb}<section class="panel" aria-label="Repository files"><div class="file-summary">${avatar(commit.author,'small')}<strong>${escape(commit.author)}</strong><span class="summary-message">${escape(commit.message)}</span><span class="summary-hash">${escape(commit.hash)}</span>${historyButton('')}</div><ul class="list file-list">${parent}${entries.map(e=>`<li><a class="file-row" href="${escape(repoHref(repo.name,'code',ref,e.path))}"><span class="file-name">${icon(e.type==='tree'?'file-directory-fill':'file',16,e.type==='tree'?'folder':'')}${escape(e.name)}${data.locks.some(l=>l.path===e.path)?icon('lock',12):''}</span><span class="file-note">${escape(e.lastCommit.message)}</span><span class="file-age">${relativeTime(e.lastCommit.date)}</span></a></li>`).join('')}</ul></section>${data.readme?.text?renderReadme(data.readme,repo,ref):''}`;
+    return `${toolbar}${version}${breadcrumb}<section class="panel" aria-label="Repository files"><div class="file-summary">${summary}</div><ul class="list file-list">${tableHead}${parent}${entries.map(e=>`<li><a class="file-row" href="${escape(repoHref(repo.name,'code',ref,e.path))}"><span class="file-name">${icon(e.type==='tree'?'file-directory-fill':'file',16,e.type==='tree'?'folder':'')}${escape(e.name)}${data.locks.some(l=>l.path===e.path)?icon('lock',12):''}</span><span class="file-note">${escape(e.lastCommit.message)}</span><span class="file-age">${relativeTime(e.lastCommit.date)}</span></a></li>`).join('')}</ul></section>${data.readme?.text?renderReadme(data.readme,repo,ref):''}`;
   }
   function liveCodeMenu(repo,ref) {
     const clone=`${location.origin}/${session.namespace}/${repo.name}.git`;
@@ -381,8 +423,8 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     }catch(error){const el=form.querySelector('#repo-error');el.hidden=false;el.textContent=error.message;}
   }
   async function createRemoteIssue(form) {
-    const values=Object.fromEntries(new FormData(form));
-    try{const result=await api(`repos/${form.dataset.repo}/issues`,{method:'POST',body:values});dialog.close();await refreshLive();location.hash=repoHref(form.dataset.repo,'issues')+'/'+result.number;}
+    const values=Object.fromEntries(new FormData(form)),repoName=values.repository||form.dataset.repo;
+    try{const result=await api(`repos/${repoName}/issues`,{method:'POST',body:values});dialog.close();await refreshLive();location.hash=repoHref(repoName,'issues')+'/'+result.number;}
     catch(error){const el=form.querySelector('#issue-error');el.hidden=false;el.textContent=error.message;}
   }
   async function editRemoteFile(repo,branch,path='') {
@@ -481,13 +523,13 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     const topNav = document.querySelector('#top-nav');
     topNav.hidden = !repo;
     topNav.innerHTML = repo ? Object.entries(tabs).map(([key, [label, symbol]]) => {
-      const count = ['issues', 'pulls'].includes(key) ? tickets.filter(t => t.repo === repo.name && t.kind === key && t.state === 'open').length : null;
-      return `<a href="${repoHref(repo.name, key)}"${key === tab ? ' aria-current="page"' : ''}>${icon(symbol)}${label}${count !== null ? `<span class="count">${count}</span>` : ''}</a>`;
+      const count = github && key==='pulls' ? window.GitpolarGithub.pullCount(githubContext(),repo) : ['issues', 'pulls'].includes(key) ? tickets.filter(t => t.repo === repo.name && t.kind === key && t.state === 'open').length : null;
+      return `<a href="${repoHref(repo.name, key)}"${key === tab ? ' aria-current="page"' : ''}>${icon(symbol)}${github&&key==='security'?'Security and quality':label}${count > 0 ? `<span class="count">${count}</span>` : ''}</a>`;
     }).join('') : '';
     document.querySelector('#pinned-nav').innerHTML = repos.filter(r => pinned.includes(r.name)).map(r => `<a href="${repoHref(r.name)}">${avatar('polar-lab', 'small org')}${namespaceLabel()}/${escape(r.name)}</a>`).join('');
     document.querySelector('#crumb').innerHTML = repo
       ? `<a class="owner-crumb" href="#/repos">${namespaceLabel()}</a><span class="slash" aria-hidden="true">/</span><span>${escape(repo.name)}</span>`
-      : `<span>${({profile:'Profile',users:name,settings:'Settings',files:'Personal files'})[page] || (github && page==='home'?'Dashboard':pages.find(p => p[0] === page)?.[1] ?? 'Dashboard')}</span>`;
+      : `<span>${({profile:'Profile',users:route().parts[1],settings:'Settings',files:'Personal files'})[page] || (github && page==='home'?'Dashboard':pages.find(p => p[0] === page)?.[1] ?? 'Dashboard')}</span>`;
   }
   function githubContext() {
     return {repos,tickets,session,workbench,activity,pinned,api,onServer,avatar,icon,escape,repoHref,starButton,personalFiles,openDialog,notify,hash:location.hash,rerender:render};
@@ -503,6 +545,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     view.className = `view${page === 'home' ? ' is-home' : repo ? ' is-repo' : ''}`;
     renderNav(repo, tab==='compare'?'code':tab, page);
     if(onServer && !session?.user) {view.className="view";view.innerHTML=liveWelcome();return;}
+    if(onServer && session?.user && !catalogReady) {view.innerHTML=backendError?empty('Unable to load workspace',backendError):'<div class="empty" role="status">Loading workspace…</div>';return;}
     const gh=window.GitpolarGithub, context=githubContext();
     if (gh && (page==='settings'||page==='profile'||page==='users'||page==='files'||gh.isGithub()&&(page==='home'||page==='pulls'))) {
       view.className='view gh-view'+(page==='settings'?' is-settings':'');
@@ -647,11 +690,11 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     const content = tab === 'code' ? (onServer?repositoryNavigation.workspace(repo,codeLayout):codeLayout)
       : ticket ? ticketDetail(ticket) : id ? empty('Not found', 'This issue or pull request does not exist.')
       : ['issues', 'pulls'].includes(tab) ? ticketPage(tab, repo.name) : auxiliaryPage(repo, tab);
-    return `<header class="repo-heading"><div class="repo-identity">${icon('repo')}<h1><a href="#/repos">${namespaceLabel()}</a><span class="muted"> / </span><a class="repo-heading-name" href="${repoHref(repo.name)}">${name}</a></h1><span class="label">${escape(repo.visibility || 'Public')}</span></div>
+    return `<header class="repo-heading" data-repo-tab="${escape(tab)}"><div class="repo-identity">${window.GitpolarGithub?.isGithub()?avatar(repo.owner,'large org'):icon('repo')}<h1><a href="#/repos">${namespaceLabel()}</a><span class="muted"> / </span><a class="repo-heading-name" href="${repoHref(repo.name)}">${name}</a></h1><span class="label">${escape(repo.visibility || 'Public')}</span></div>
       <div class="repo-heading-actions">
         ${onServer&&repo.kind==='album'?`<a class="button primary" href="/albums/?${escape(new URLSearchParams({repo:repo.name,ref:query.get('branch')||repo.defaultBranch}))}">${icon('book')}可视化相册</a>`:''}
         <button class="button" data-action="pin" data-repo="${name}" aria-pressed="${pinned.includes(repo.name)}">${icon('pin')}${pinned.includes(repo.name) ? 'Pinned' : 'Pin'}</button>
-        <button class="button" data-action="watch" data-repo="${name}" aria-pressed="${watch}">${icon('eye')}${watch ? 'Unwatch' : 'Watch'}<span class="count">${watch ? 1 : 0}</span>${icon('chevron-down', 12)}</button>
+        <button class="button" data-action="watch" data-repo="${name}" aria-pressed="${watch}">${icon('eye')}${watch ? 'Unwatch' : 'Watch'}<span class="count">${onServer?repo.watchCount||0:watch?1:0}</span>${icon('chevron-down', 12)}</button>
         <button class="button" data-action="fork" data-repo="${name}">${icon('repo-forked')}Fork<span class="count">0</span>${icon('chevron-down', 12)}</button>
         ${starButton(repo)}
       </div></header>${content}`;
@@ -734,7 +777,8 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
 
   function ticketPage(kind, repoName = '') {
-    if(onServer && kind==='pulls') return empty('Pull requests','Git 仓库托管已启用，Pull request 审查流程尚未接入。','git-pull-request');
+    if(onServer && kind==='issues' && window.GitpolarGithub?.isGithub())return window.GitpolarGithub.issuePage(githubContext(),repoName);
+    if(onServer && kind==='pulls') return window.GitpolarGithub?.isGithub()?window.GitpolarGithub.pullPage(githubContext(),repoName):empty('Pull requests','Git 仓库托管已启用，Pull request 审查流程尚未接入。','git-pull-request');
     const items = tickets.filter(t => t.kind === kind && (!repoName || t.repo === repoName));
     const open = items.filter(t => t.state === 'open').length;
     const closed = items.length - open;
@@ -745,7 +789,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       </section>`;
   }
   function ticketRows(items) {
-    return items.map(t => `<li class="ticket-item"><a class="ticket-row${t.state === 'closed' ? ' is-closed' : ''}" href="${ticketHref(t)}">${icon(t.kind === 'issues' ? t.state === 'closed' ? 'issue-closed' : 'issue-opened' : t.state === 'closed' ? 'git-merge' : 'git-pull-request')}<div><strong class="ticket-title">${escape(t.title)}</strong>${t.id === 23 ? '<span class="issue-label">bug</span>' : ''}<div class="ticket-meta">${escape(t.repo)} #${t.id} · opened ${escape(t.updated)} by ${escape(t.author)}</div></div><span class="ticket-comments">${icon('comment')}0</span></a></li>`).join('') || '<li class="empty">No results matched your search.</li>';
+    return items.map(t => `<li class="ticket-item"><a class="ticket-row${t.state === 'closed' ? ' is-closed' : ''}" href="${ticketHref(t)}">${icon(t.kind === 'issues' ? t.state === 'closed' ? 'issue-closed' : 'issue-opened' : t.state === 'closed' ? 'git-merge' : 'git-pull-request')}<div><strong class="ticket-title">${escape(t.title)}</strong>${!onServer && t.id === 23 ? '<span class="issue-label">bug</span>' : ''}<div class="ticket-meta">${escape(t.repo)} #${t.id} · opened ${escape(t.updated)} by ${escape(t.author)}</div></div><span class="ticket-comments">${icon('comment')}0</span></a></li>`).join('') || '<li class="empty">No results matched your search.</li>';
   }
   function filterTickets() {
     const section = document.querySelector('#ticket-section');
@@ -759,9 +803,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     const closed = ticket.state === 'closed';
     return `<h1 class="detail-title">${escape(ticket.title)} <span>#${ticket.id}</span></h1><div class="detail-meta"><span class="state-pill${closed ? ' closed' : ''}">${icon(closed ? 'check' : 'issue-opened')}${closed ? ticket.kind === 'pulls' ? 'Merged' : 'Closed' : 'Open'}</span><span><strong>${escape(ticket.author)}</strong> opened this ${ticket.kind === 'issues' ? 'issue' : 'pull request'} ${escape(ticket.updated)} · 0 comments</span></div>
       <div class="comment-layout">${avatar(ticket.author, 'large')}<article class="comment-box"><header class="comment-heading"><strong>${escape(ticket.author)}</strong> commented ${escape(ticket.updated)}</header><div class="comment-content">${escape(ticket.body)}</div>${ticket.branch ? `<div class="comment-content"><a class="button small" href="${repoHref(ticket.repo,'code',ticket.branch)}">${icon('git-branch')}${escape(ticket.branch)}</a></div>` : ''}</article>
-      <aside class="detail-side"><div><h3>Assignees</h3>No one assigned</div><div><h3>Labels</h3>${ticket.id === 23 ? '<span class="issue-label">bug</span>' : 'None yet'}</div><div><h3>Projects</h3>None yet</div><div><h3>Milestone</h3>No milestone</div><div><h3>Development</h3>${ticket.branch ? escape(ticket.branch) : 'No branches or pull requests'}</div></aside></div>`;
+      <aside class="detail-side"><div><h3>Assignees</h3>No one assigned</div><div><h3>Labels</h3>${!onServer && ticket.id === 23 ? '<span class="issue-label">bug</span>' : 'None yet'}</div><div><h3>Projects</h3>None yet</div><div><h3>Milestone</h3>No milestone</div><div><h3>Development</h3>${ticket.branch ? escape(ticket.branch) : 'No branches or pull requests'}</div></aside></div>`;
   }
   function auxiliaryPage(repo, tab) {
+    if(onServer && window.GitpolarGithub?.isGithub() && ['actions','security','wiki','insights'].includes(tab)) return window.GitpolarGithub.repositoryOverview(githubContext(),repo,tab);
     if (tab === 'actions') return `<header class="page-head"><h1>All workflows</h1></header>${empty('Get started with Actions', 'Workflow execution is not connected in this HTML preview.', 'play')}`;
     if (tab === 'projects') {
       const items = tickets.filter(t => t.repo === repo.name);
@@ -820,8 +865,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     notify(saved ? 'Repository created in this browser.' : 'Repository created for this session only.');
   }
   function newIssue(repo) {
+    const choose=!repo && onServer && window.GitpolarGithub?.isGithub();
+    if(choose)repo=repos[0];
     if (!repo) return;
-    openDialog('New issue', `<form id="new-issue-form" data-repo="${escape(repo.name)}"><p class="dialog-note">${namespaceLabel()} / ${escape(repo.name)} · ${onServer ? 'Server' : 'Local preview'}</p><label class="field">Add a title *<input name="title" autofocus required maxlength="160" placeholder="Title"></label><label class="field">Add a description<textarea name="body" rows="6" maxlength="6000" placeholder="Type your description here…"></textarea></label><p class="field-error" id="issue-error" role="alert" hidden></p><div class="dialog-actions"><button class="button" type="button" data-action="close">Cancel</button><button class="button primary" type="submit">Create issue</button></div></form>`);
+    openDialog('New issue', `<form id="new-issue-form" data-repo="${escape(repo.name)}">${choose?`<label class="field">Repository<select name="repository" required>${repos.map(r=>`<option value="${escape(r.name)}">${escape(r.owner)}/${escape(r.name)}</option>`).join('')}</select></label>`:''}<p class="dialog-note">${choose?'Create an issue in the selected repository.':`${namespaceLabel()} / ${escape(repo.name)} · ${onServer ? 'Server' : 'Local preview'}`}</p><label class="field">Add a title *<input name="title" autofocus required maxlength="160" placeholder="Title"></label><label class="field">Add a description<textarea name="body" rows="6" maxlength="6000" placeholder="Type your description here…"></textarea></label><p class="field-error" id="issue-error" role="alert" hidden></p><div class="dialog-actions"><button class="button" type="button" data-action="close">Cancel</button><button class="button primary" type="submit">Create issue</button></div></form>`);
   }
   function createIssue(form) {
     if(onServer) return createRemoteIssue(form);
@@ -987,7 +1034,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       case 'add-file': editFile(repo,branch); break;
       case 'edit-readme': editFile(repo,branch,'README.md'); break;
       case 'ticket-state': ticketState = button.dataset.state; filterTickets(); break;
-      case 'fork': openDialog('Create a new fork', `<p class="dialog-note">Fork creation is not implemented in this version. You can download this preview's files to start a local copy.</p><div class="dialog-actions"><button class="button primary" data-action="download" data-repo="${escape(name)}">${icon('download')}Download ZIP</button></div>`); break;
+      case 'fork': openDialog('Create a new fork', `<p class="dialog-note">此实例尚未启用仓库 Fork 网络。可以下载当前版本的完整工程，或用 Git clone 后创建新仓库。</p><div class="dialog-actions"><button class="button primary" data-action="download" data-repo="${escape(name)}">${icon('download')}Download ZIP</button></div>`); break;
       case 'feed-filter': openDialog('Filter feed', `<label class="field">Activity type<select id="feed-filter" class="select"><option value="all"${feedKind === 'all' ? ' selected' : ''}>All activity</option><option value="issues"${feedKind === 'issues' ? ' selected' : ''}>Issues</option><option value="pulls"${feedKind === 'pulls' ? ' selected' : ''}>Pull requests</option></select></label><div class="dialog-actions"><button class="button primary" data-action="apply-feed">Apply</button></div>`); break;
       case 'apply-feed': feedKind = document.querySelector('#feed-filter').value; dialog.close(); render(); break;
       case 'notifications': openDialog('Notifications', `<div class="search-results">${tickets.filter(t => t.state === 'open').slice(0,5).map(t => `<a class="search-hit" href="${ticketHref(t)}">${icon(t.kind === 'issues' ? 'issue-opened' : 'git-pull-request')}<span>${escape(t.title)}<small>${namespaceLabel()}/${escape(t.repo)} #${t.id}</small></span></a>`).join('')}</div>`); break;
@@ -1029,6 +1076,8 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     if (event.key === 'Enter' && event.target.id === 'search-query') { event.preventDefault(); dialog.querySelector('.search-hit')?.click(); }
     if (event.key === 'Escape') document.querySelectorAll('.code-dropdown[open]').forEach(details => details.open = false);
   });
+  dialog.addEventListener('close', () => document.querySelector('.account-trigger').setAttribute('aria-expanded','false'));
+  dialog.addEventListener('click', event => { if(event.target!==dialog)return;const b=dialog.getBoundingClientRect();if(event.clientX<b.left||event.clientX>b.right||event.clientY<b.top||event.clientY>b.bottom)dialog.close(); });
   menu.addEventListener('click', () => setMenu(true));
   document.querySelector('#menu-close').addEventListener('click', () => setMenu(false));
   rail.addEventListener('close', () => menu.setAttribute('aria-expanded',String(rail.open)));

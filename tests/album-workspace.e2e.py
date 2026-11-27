@@ -70,7 +70,7 @@ def exercise(origin, browser):
         expect(reviewer.locator('#review .pr-state')).to_have_text('已合并')
         reviewer.get_by_role('button', name='关闭审核详情').click()
 
-    review_pr('训练照片')
+    reviewer.goto(origin+'/#/pulls');reviewer.get_by_role('link',name='训练照片',exact=False).click();expect(reviewer.locator('#review .pr-state')).to_have_text('待审核');expect(reviewer.locator('.review-image')).to_be_visible()
     reviewer.get_by_role('button', name='下一张').click()
     expect(reviewer.locator('.review-paging')).to_contain_text('2 / 5')
     merge()

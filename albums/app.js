@@ -186,6 +186,7 @@ function markNav() {
     } else a.removeAttribute('aria-current');
   }
 }
+let deepPullOpened = false;
 async function refreshPulls() {
   const token = ++currentPullLoad;
   try {
@@ -199,7 +200,11 @@ async function refreshPulls() {
   }
   reviewNav();
   markNav();
-  if (kind === 'pulls') renderResults();
+  if (kind === 'pulls') {
+    renderResults();
+    const number = new URLSearchParams(location.search).get('pull');
+    if (!deepPullOpened && /^\d+$/.test(number || '') && !pullsError) { deepPullOpened = true; collab.showReview(Number(number)); }
+  }
 }
 async function load() {
   const token = ++loadId;
