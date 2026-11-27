@@ -1,89 +1,227 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f6f8fa">
-  <title>相册仓库 · Gitpolar</title>
-  <link rel="icon" href="/assets/gitpolar-logo.png">
-  <link rel="stylesheet" href="/styles.css">
-  <link rel="stylesheet" href="/albums/styles.css">
-  <script type="module" src="/albums/app.js"></script>
-</head>
-<body class="albums-page">
-  <svg class="al-symbols" xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" focusable="false">
-    <symbol id="i-repo" viewBox="0 0 24 24"><path d="M5 19.5A2.5 2.5 0 0 1 7.5 17H20V4H7.5A2.5 2.5 0 0 0 5 6.5Zm0 0A2.5 2.5 0 0 0 7.5 22H20M9 8h7M9 11h4"/></symbol>
-    <symbol id="i-albums" viewBox="0 0 24 24"><rect x="6" y="3" width="15" height="15" rx="2"/><path d="M3 7v12a2 2 0 0 0 2 2h12M7 15l4-4 3 3 2-2 4 4"/><circle cx="15.5" cy="8" r="1"/></symbol>
-    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 18 5-5 3 3 4-5 5 6"/></symbol>
-    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/></symbol>
-    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a1 1 0 0 1 1-1h6l2 3h8a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z"/></symbol>
-    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></symbol>
-    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"/></symbol>
-    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
-    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 3v.1"/></symbol>
-    <symbol id="i-left" viewBox="0 0 24 24"><path d="m14.5 5-7 7 7 7"/></symbol>
-    <symbol id="i-right" viewBox="0 0 24 24"><path d="m9.5 5 7 7-7 7"/></symbol>
-    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
-    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></symbol>
-  </svg>
-  <a class="skip-link" id="skip" href="#album-main">跳到相册内容</a>
-  <header class="al-header">
-    <div class="al-bar">
-      <a class="al-brand" href="/" aria-label="Gitpolar 首页"><img class="site-logo" src="/assets/gitpolar-logo.png" alt="" width="32" height="32"><strong>Gitpolar</strong></a>
-      <nav class="al-crumbs" aria-label="面包屑"><ol id="crumbs"><li>相册仓库</li></ol></nav>
-      <a class="button al-repo-link" id="repo-link" href="/#/repos"><svg class="al-icon" aria-hidden="true"><use href="#i-repo"/></svg><span id="repo-link-label">主站仓库</span></a>
-    </div>
-  </header>
-  <main class="al-main" id="album-main" tabindex="-1">
-    <header class="al-intro">
-      <h1 id="page-title">相册仓库</h1>
-      <p class="al-description" id="description" hidden></p>
-      <div class="al-facts" id="facts" hidden></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#e7e7eb" />
+    <title>相册工作区 · Gitpolar</title>
+    <link rel="icon" href="/assets/gitpolar-logo.png" />
+    <link rel="stylesheet" href="/albums/styles.css" />
+    <script type="module" src="/albums/app.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">跳到照片区</a>
+    <header class="chrome">
+      <div class="library-head">
+        <button
+          class="tool"
+          id="toggle-library"
+          aria-label="活动目录"
+          title="显示或隐藏活动目录"
+          aria-controls="library"
+        >
+          <i data-icon="sidebar"></i></button
+        ><a href="/albums/" class="library-name" title="切换相册仓库"
+          ><img src="/assets/gitpolar-logo.png" alt="Gitpolar" width="21" height="21" /><strong
+            id="library-name"
+            >相册资源库</strong
+          ><i data-icon="chevrons"></i
+        ></a>
+      </div>
+      <div class="top-middle">
+        <div class="tab"><i data-icon="image"></i><span id="tab-title">照片工作区</span></div>
+        <label class="search"
+          ><i data-icon="search"></i
+          ><input
+            id="search"
+            type="search"
+            aria-label="搜索当前视图"
+            placeholder="搜索照片、活动或标签"
+            maxlength="250"
+          /><kbd>/</kbd></label
+        >
+      </div>
+      <button
+        id="toggle-info"
+        class="tool"
+        aria-label="照片检查器"
+        title="显示或隐藏检查器"
+        aria-controls="inspector"
+      >
+        <i data-icon="inspector"></i>
+      </button>
     </header>
-    <nav class="al-library-nav" id="library-nav" aria-label="素材库视图" hidden>
-      <a href="#/" id="activities-tab">活动相册</a><a href="#/photos" id="photos-tab">全部照片</a>
-    </nav>
-    <section id="collection" aria-labelledby="collection-title" hidden>
-      <div class="al-toolbar">
-        <div class="al-section-title"><h2 id="collection-title"></h2><span class="al-total" id="result-count" role="status" aria-atomic="true"></span></div>
-        <div class="al-filters" id="filters" role="search" aria-label="筛选相册内容">
-          <label class="al-search"><svg class="al-icon" aria-hidden="true"><use href="#i-search"/></svg><span class="sr-only" id="search-label">关键词搜索</span><input id="search" type="search" autocomplete="off" maxlength="250"></label>
-          <label><span class="sr-only">年份筛选</span><select id="year" aria-label="年份筛选"></select></label>
-          <label><span class="sr-only">日期排序</span><select id="sort" aria-label="日期排序"><option value="desc">日期从新到旧</option><option value="asc">日期从旧到新</option></select></label>
+    <div id="shell" class="shell">
+      <aside id="library" class="pane library" aria-label="资源库导航">
+        <div class="library-scroll">
+          <div class="side-label">资源库</div>
+          <nav id="views" aria-label="资源库视图"></nav>
+          <div id="folders" hidden>
+            <div class="side-label"><span>活动目录</span><span id="activity-count"></span></div>
+            <nav id="tree" aria-label="按年份浏览活动"></nav>
+          </div>
+          <div id="collab" hidden>
+            <div class="side-label">协作</div>
+            <nav id="review-nav" aria-label="相册投稿"></nav>
+          </div>
         </div>
-      </div>
-      <div class="al-photo-tools" id="photo-tools" hidden>
-        <div class="al-view-switch" role="group" aria-label="照片排版"><button type="button" id="justified" aria-pressed="true">等高排列</button><button type="button" id="masonry" aria-pressed="false">瀑布流</button></div>
-        <label><span class="sr-only">按星级筛片</span><select id="rating-filter" aria-label="按星级筛片"><option value="">全部星级</option><option value="5">5 星</option><option value="4">4 星及以上</option><option value="3">3 星及以上</option><option value="1">已打星</option><option value="0">未打星</option></select></label>
-        <label><span class="sr-only">按标签筛片</span><select id="tag-filter" aria-label="按标签筛片"><option value="">全部标签</option></select></label>
-        <details id="export-help" class="al-export" hidden><summary>导出到 Serpent</summary><div><p>下载本活动的原图、星级和标签。解压后，在 Serpent 的「导入外部资源库」中选择 <code>.library</code> 文件夹。</p><a class="button" id="serpent-download" download>下载活动素材包</a></div></details>
-      </div>
-      <div id="groups"></div>
-      <button type="button" class="button al-more" id="more" hidden>显示更多</button>
-    </section>
-    <div class="al-notice" id="notice" role="status" aria-live="polite"><h2>正在读取相册…</h2></div>
-    <noscript><p>请启用 JavaScript 查看相册。</p></noscript>
-  </main>
-  <dialog class="al-viewer" id="viewer" aria-labelledby="viewer-title">
-    <div class="al-viewer-head">
-      <div class="al-file-heading"><h2 id="viewer-title"></h2><p id="viewer-path"></p></div>
-      <button type="button" class="button al-square" id="close" aria-label="关闭大图" title="关闭（Esc）" autofocus><svg class="al-icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+        <a id="repo-link" class="repo-foot" href="/#/repos"
+          ><i data-icon="branch"></i><span id="ref-label">Gitpolar</span><i data-icon="external"></i
+        ></a>
+      </aside>
+      <main id="main" class="pane center" tabindex="-1">
+        <div class="toolbar">
+          <div class="heading">
+            <span class="heading-icon" id="heading-icon"></span>
+            <h1 id="heading">相册工作区</h1>
+            <span class="pill" id="total" hidden></span>
+          </div>
+          <div class="toolbar-actions" id="layout-tools" hidden>
+            <button class="tool" id="justified" aria-label="等高排列" title="等高排列">
+              <i data-icon="rows"></i></button
+            ><button class="tool" id="masonry" aria-label="瀑布流" title="瀑布流">
+              <i data-icon="masonry"></i></button
+            ><label class="zoom" title="缩略图大小"
+              ><input type="range" id="size" min="110" max="270" step="10" value="190" aria-label="缩略图大小"
+            /></label>
+          </div>
+          <button class="tool" id="reload-pulls" aria-label="刷新投稿" title="刷新投稿" hidden><i data-icon="refresh"></i></button>
+          <button class="primary compact" id="upload" hidden>
+            <i data-icon="upload"></i><span>投稿</span>
+          </button>
+        </div>
+        <div class="filterbar" id="filters" hidden>
+          <label class="filter"
+            ><i data-icon="calendar"></i
+            ><select id="year" aria-label="年份"></select
+          ></label>
+          <label class="filter photo-filter"
+            ><i data-icon="tag"></i
+            ><select id="tag" aria-label="标签"></select
+          ></label>
+          <label class="filter photo-filter"
+            ><i data-icon="star"></i
+            ><select id="rating" aria-label="评分">
+              <option value="">评分</option>
+              <option value="5">5 星</option>
+              <option value="4">≥ 4 星</option>
+              <option value="3">≥ 3 星</option>
+              <option value="1">已打星</option>
+              <option value="0">未打星</option>
+            </select></label
+          >
+          <label class="filter sort"
+            ><i data-icon="sort"></i
+            ><select id="sort" aria-label="排序">
+              <option value="desc">日期 ↓</option>
+              <option value="asc">日期 ↑</option>
+              <option value="name">名称 A–Z</option>
+            </select></label
+          >
+          <button class="filter" id="reset" hidden>清除筛选</button>
+          <div class="spacer"></div>
+          <button
+            class="filter photo-filter"
+            id="multi"
+            aria-pressed="false"
+            title="单击切换每张照片的选择状态"
+          >
+            <i data-icon="select"></i>多选</button
+          ><button
+            class="filter photo-filter"
+            id="selection-menu"
+            popovertarget="select-pop"
+            aria-label="选择操作"
+          >
+            <i data-icon="more"></i>
+          </button>
+          <div id="select-pop" class="popover" popover>
+            <button id="select-all">全选当前结果</button><button id="invert">反选</button
+            ><button id="clear-selection">取消选择</button>
+          </div>
+        </div>
+        <div class="scroll" id="scroll">
+          <section class="notice" id="notice" role="status">正在读取资源库…</section>
+          <div id="gallery"></div>
+          <button id="more" class="secondary more" hidden>显示更多</button>
+        </div>
+        <footer class="statusbar">
+          <span id="status" aria-live="polite"></span><span id="status-extra"></span>
+        </footer>
+      </main>
+      <aside id="inspector" class="pane inspector" aria-label="照片检查器">
+        <div class="ins-head">
+          <span>检查器</span
+          ><button id="hide-info" class="tool" aria-label="收起检查器"><i data-icon="inspector"></i></button>
+        </div>
+        <div id="details"></div>
+      </aside>
+      <button id="shade" aria-label="收起面板" hidden></button>
     </div>
-    <div class="al-stage" id="stage"></div>
-    <details class="al-inspector" id="inspector"><summary>星级与标签<span id="selection-summary"></span></summary>
-      <form id="selection-form"><label>星级<select id="star-input" aria-label="照片星级"><option value="0">未打星</option><option value="1">1 星</option><option value="2">2 星</option><option value="3">3 星</option><option value="4">4 星</option><option value="5">5 星</option></select></label>
-      <label class="al-tag-field">标签<input id="tag-input" maxlength="820" placeholder="用逗号分隔，如 合照，决赛" autocomplete="off"></label>
-      <button class="button primary" id="save-selection" type="submit">保存到分支</button><span role="status" aria-live="polite" id="selection-status"></span></form>
-    </details>
-    <div class="al-viewer-foot">
-      <div class="al-paging" role="group" aria-label="照片导航">
-        <button type="button" class="button al-square" id="previous" aria-label="上一张" title="上一张（←）"><svg class="al-icon" aria-hidden="true"><use href="#i-left"/></svg></button>
-        <span id="position" aria-live="polite" aria-atomic="true"></span>
-        <button type="button" class="button al-square" id="next" aria-label="下一张" title="下一张（→）"><svg class="al-icon" aria-hidden="true"><use href="#i-right"/></svg></button>
+    <dialog id="viewer" class="lightbox" aria-labelledby="viewer-name">
+      <header>
+        <strong id="viewer-name"></strong
+        ><button class="tool" data-dismiss aria-label="关闭大图"><i data-icon="close"></i></button>
+      </header>
+      <div class="stage">
+        <button class="tool" id="prev" aria-label="上一张"><i data-icon="left"></i></button>
+        <div id="stage"></div>
+        <button class="tool" id="next" aria-label="下一张"><i data-icon="right"></i></button>
       </div>
-      <p class="al-image-info" id="image-info"></p>
-      <a class="button al-download" id="download" download><svg class="al-icon" aria-hidden="true"><use href="#i-download"/></svg><span id="download-label">下载原图</span></a>
-    </div>
-  </dialog>
-</body>
+      <footer>
+        <span id="viewer-meta"></span><span id="position"></span
+        ><a id="original" class="secondary" download><i data-icon="download"></i>原图</a>
+      </footer>
+    </dialog>
+    <dialog id="compose" class="dialog" aria-labelledby="compose-title">
+      <form id="proposal-form">
+        <header>
+          <div class="dialog-title">
+            <i data-icon="pull"></i>
+            <h2 id="compose-title">新建投稿</h2>
+          </div>
+          <button type="button" class="tool" data-dismiss aria-label="关闭投稿">
+            <i data-icon="close"></i>
+          </button>
+        </header>
+        <div class="dialog-body">
+          <div id="upload-fields">
+            <label>投稿到活动<select id="target-activity" required></select></label>
+            <div class="two" id="new-fields" hidden>
+              <label>活动名称<input id="activity-name" maxlength="80" /></label
+              ><label>活动日期<input id="activity-date" type="date" /></label>
+            </div>
+            <label class="drop" id="drop"
+              ><i data-icon="upload"></i><strong>拖入照片，或点击选择</strong
+              ><small>JPEG、PNG、WebP、GIF · 每张最多 64 MiB</small
+              ><input id="file-input" type="file" accept=".jpg,.jpeg,.png,.webp,.gif" multiple
+            /></label>
+            <div class="queue" id="queue"></div>
+          </div>
+          <div id="edit-summary" class="callout" hidden></div>
+          <label
+            >投稿标题<input
+              id="pr-title"
+              required
+              maxlength="120"
+              placeholder="例如：补充周六训练合照" /></label
+          ><label
+            >说明 <small>可选</small><textarea id="pr-description" maxlength="3000" rows="2"></textarea>
+          </label>
+          <p class="feedback" id="compose-status" role="status"></p>
+        </div>
+        <footer><span>合并后在主相册可见</span><button class="primary" id="submit-pr">提交 PR</button></footer>
+      </form>
+    </dialog>
+    <dialog id="review" class="dialog review" aria-labelledby="review-title">
+      <header>
+        <div class="dialog-title">
+          <i data-icon="pull"></i>
+          <h2 id="review-title">相册投稿</h2>
+        </div>
+        <button class="tool" data-dismiss aria-label="关闭审核详情"><i data-icon="close"></i></button>
+      </header>
+      <div class="dialog-body" id="review-content"></div>
+    </dialog>
+  </body>
 </html>

@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "test": "node --test --test-concurrency=1 tests/integration.test.mjs tests/compare-navigation.test.mjs tests/graph.test.mjs tests/firmware.test.mjs tests/procurement.test.mjs tests/procurement-workbench.test.mjs tests/feishu.test.mjs tests/feishu-cli.test.mjs tests/runtime.test.mjs tests/album.test.mjs",
+    "test": "node --test --test-concurrency=1 tests/integration.test.mjs tests/compare-navigation.test.mjs tests/graph.test.mjs tests/firmware.test.mjs tests/procurement.test.mjs tests/procurement-workbench.test.mjs tests/feishu.test.mjs tests/feishu-cli.test.mjs tests/runtime.test.mjs tests/album.test.mjs tests/album-pulls.test.mjs",
     "import:album": "node scripts/import-photo-album.mjs",
     "build:viewer": "node scripts/build-viewer.mjs",
     "package:nas": "node scripts/package-nas.mjs",

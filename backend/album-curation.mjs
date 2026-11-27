@@ -6,7 +6,7 @@ const idPattern = /^[a-f0-9]{24}$/;
 const commitPattern = /^[a-f0-9]{40}$/;
 export const unmarked = Object.freeze({rating:0, tags:Object.freeze([])});
 
-function selection(value, status = 400) {
+export function selection(value, status = 400) {
   if (!Number.isInteger(value?.rating) || value.rating < 0 || value.rating > 5) fail(status,'星级应为 0 至 5。');
   if (!Array.isArray(value.tags) || value.tags.length > 20 || value.tags.some(t => typeof t !== 'string' || !t.trim() || t.trim().length > 40 || /[\u0000-\u001f\u007f,，]/u.test(t))) {
     fail(status,'最多可保存 20 个标签，每个标签限 40 个字。');

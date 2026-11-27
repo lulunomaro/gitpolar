@@ -21,6 +21,8 @@ import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.m
 import { firmwareApi } from './firmware.mjs';
 import { albumList, albumView, albumMedia, savePhotoSelection } from './album.mjs';
 import { exportSerpentActivity } from './album-export.mjs';
+import { albumPullApi } from './album-pulls.mjs';
+import { albumRefError } from './album-policy.mjs';
 
 function account(req,res,mutate=false) {
   const auth=authenticate(req);if(!auth)fail(401,'Sign in or use a gitpolar access token.');
@@ -91,14 +93,17 @@ export async function api(req,res,pathname,params,changed,events) {
   }
   const match=pathname.match(/^\/api\/repos\/([a-z0-9][a-z0-9_-]{0,47})(?:\/(.*))?$/);
   if(match) {
-    const user=requireAuth(req,res,!['GET','HEAD'].includes(req.method));
+    const proposalRoute = match[2]==='album/pulls' || match[2]?.startsWith('album/pulls/');
+    const write = !['GET','HEAD'].includes(req.method);
+    const user = proposalRoute ? account(req,res,write) : requireAuth(req,res,write);
     const repo=repository(match[1]);if(!repo)fail(404,'Repository not found.');
     const expectedRepositoryId=req.headers['x-gitpolar-repository-id'];
     if(expectedRepositoryId!==undefined&&expectedRepositoryId!==repo.id)fail(409,'Repository identity does not match the selected repository. Resolve the document context again.');
     res.setHeader('X-Gitpolar-Repository-Id',repo.id);
     const action=match[2]||'',ref=params.get('ref')||'main',path=params.get('path')||'';
     if(!action && req.method==='GET')return json(res,await describe(repo,user.id));
-    if(action==='album' && req.method==='GET')return json(res,await albumView(repo,ref,user.role !== 'reader'));
+    if(proposalRoute) return albumPullApi(req,res,repo,user,action,params,changed);
+    if(action==='album' && req.method==='GET')return json(res,await albumView(repo,ref,user.role !== 'reader' && !albumRefError(repo,'refs/heads/'+ref,user.id)));
     if(action==='album/selection' && req.method==='PUT') {
       const result = await savePhotoSelection(repo,user,ref,await body(req));
       changed(repo.name);
@@ -113,11 +118,11 @@ export async function api(req,res,pathname,params,changed,events) {
     }
     if(action==='branches' && req.method==='GET')return json(res,await branchOverview(repo));
     if(action==='branches' && req.method==='POST') {
-      const values=await body(req),branch=await createBranch(repo,values.name,values.from);
+      const values=await body(req),branch=await createBranch(repo,values.name,values.from,user.id);
       changed(repo.name);return json(res,branch,201);
     }
     if(action==='branches' && req.method==='DELETE') {
-      const values=await body(req);await deleteBranch(repo,values.name,values.expectedOid);
+      const values=await body(req);await deleteBranch(repo,values.name,values.expectedOid,user.id);
       changed(repo.name);return json(res,{ok:true});
     }
     if(action==='tree' && req.method==='GET') {

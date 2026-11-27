@@ -1,0 +1,70 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fork, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { once } from 'node:events';
+import { mkdtemp,rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+const exec=promisify(execFile);
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAMCAIAAADkharWAAAAGUlEQVR4nGNkaGAgCTCRppxhVANRYDgEKwBC6wCYoXACLgAAAABJRU5ErkJggg==','base64');
+
+test('team members propose, only the album owner merges, and concurrent PRs keep independent edits',{timeout:90000},async t=>{
+  const python=process.env.GITPOLAR_ALBUM_PYTHON || (process.platform==='win32'?'python':'python3');
+  try { await exec(python,['-c','from PIL import Image'],{windowsHide:true}); } catch {t.skip('Album upload integration requires Python with Pillow');return;}
+  const directory=await mkdtemp(join(tmpdir(),'gitpolar-review-'));
+  const env={...process.env,DATA_DIR:directory,WORKSPACE_NAME:'polar-lab',APP_ORIGIN_ALIASES:'',FEISHU_APP_ID:'',FEISHU_APP_SECRET:'',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:''};
+  const child=fork(new URL('./procurement-fixture.mjs',import.meta.url),[],{cwd:fileURLToPath(new URL('../',import.meta.url)),env,windowsHide:true,stdio:['ignore','pipe','pipe','ipc']});
+  let logs='';child.stderr.on('data',c=>logs+=c);child.stdout.resume();
+  const origin=await Promise.race([once(child,'message').then(([v])=>v),once(child,'exit').then(()=>{throw Error(logs);})]);
+  const api='/api/repos/events/album',pulls=api+'/pulls';
+  async function call(path,cookie='',method='GET',data,status=200,extra={}) {
+    const raw=Buffer.isBuffer(data);
+    const response=await fetch(origin+path,{method,headers:{origin,cookie,...(data?{'Content-Type':raw?'application/octet-stream':'application/json'}:{}),...extra},body:data?(raw?data:JSON.stringify(data)):undefined});
+    const bytes=Buffer.from(await response.arrayBuffer());
+    assert.equal(response.status,status,method+' '+path+' '+bytes.toString('utf8',0,160));
+    if(response.headers.has('set-cookie'))return response.headers.get('set-cookie').split(';')[0];
+    return response.headers.get('content-type')?.includes('json')?JSON.parse(bytes):bytes;
+  }
+  try {
+    const password='album-fixture-password';
+    const owner=await call('/api/setup','','POST',{username:'owner',password},201);
+    for(const [username,role] of [['member','reader'],['writer','writer'],['admin2','admin']])await call('/api/users',owner,'POST',{username,password,role},201);
+    const signIn=username=>call('/api/login','','POST',{username,password});
+    const member=await signIn('member'), writer=await signIn('writer'), admin=await signIn('admin2');
+    await call('/api/repos',owner,'POST',{name:'events',kind:'album'},201);
+    const initial=await call(api,member);assert.equal(initial.stats.photos,0);
+    await call(pulls,'','GET',null,401);await call(pulls,member,'POST',{},403,{origin:'http://other.invalid'});
+    const upload=(name,who=member)=>call(pulls+'/uploads?'+new URLSearchParams({name}),who,'PUT',png,201);
+    await call(pulls+'/uploads?name=bad.png',member,'PUT',Buffer.from('bad'),422);
+    const image=await upload('合照.png');assert.equal(image.width,16);
+    const payload={title:'中期考核',date:'2026-11-18',activityName:'训练',uploads:[image.id],expectedHead:initial.oid,key:randomUUID()};
+    await call(pulls,writer,'POST',payload,404);
+    const pr=await call(pulls,member,'POST',payload,201);
+    assert.equal(pr.state,'open');assert.equal(pr.canReview,false);assert.equal((await call(pulls,member,'POST',payload,201)).number,pr.number);
+    assert.equal((await call(api,owner)).stats.photos,0);assert.ok((await call(pr.photos[0].previewUrl,owner)).length>100);
+    const url=pulls+'/'+pr.number, decision={expectedHead:pr.head};
+    await call(url+'/merge',member,'POST',decision,403);await call(url+'/merge',admin,'POST',decision,403);
+    await call('/api/repos/events/file',writer,'PUT',{branch:'main',path:'test.md',text:'x'},403);
+    await call('/api/repos/events/file',writer,'PUT',{branch:pr.branch,path:'test.md',text:'x'},403);
+    await call(url+'/merge',owner,'POST',{expectedHead:initial.oid},409);
+    const merged=await call(url+'/merge',owner,'POST',decision);assert.equal(merged.state,'merged');
+    assert.equal((await call(url+'/merge',owner,'POST',decision)).decisionOid,merged.decisionOid);
+    const photos=await call(api,member), photo=photos.photos[0];assert.deepEqual(await call(photo.originalUrl,member),png);
+    const bare=join(directory,'repositories','polar-lab','events.git');
+    const parents=(await exec('git',['--git-dir',bare,'show','-s','--format=%P',merged.decisionOid])).stdout.trim().split(' ');
+    assert.deepEqual(parents,[initial.oid,pr.head]);
+    const propose=(title,parts)=>call(pulls,member,'POST',{title,key:randomUUID(),expectedHead:photos.oid,...parts},201);
+    const addA=await propose('补录第二张',{activityId:photo.albumId,uploads:[(await upload('第二张.png')).id]});
+    const marks=await propose('整理星级和标签',{edits:{ids:[photo.id],rating:5,addTags:['合照']}});
+    const conflicting=await propose('其他星级',{edits:{ids:[photo.id],rating:4}});
+    const merge=(p,status=200)=>call(pulls+'/'+p.number+'/merge',owner,'POST',{expectedHead:p.head},status);
+    await merge(addA);await merge(marks);await merge(conflicting,409);
+    const live=await call(api,owner);assert.equal(live.stats.photos,2);assert.deepEqual(live.photos[0].tags,['合照']);assert.equal(live.photos[0].rating,5);
+    assert.equal((await call(api+'?ref='+photos.oid,owner)).photos[0].rating,0);
+    const closed=await call(pulls+'/'+conflicting.number+'/close',owner,'POST',{expectedHead:conflicting.head,reason:'采用已审核星级'});assert.equal(closed.reason,'采用已审核星级');await merge(conflicting,409);
+    const list=await call(pulls,member);assert.deepEqual(list.pulls.map(p=>p.state),['closed','merged','merged','merged']);
+  } finally {if(child.exitCode===null){const done=once(child,'exit');child.send('stop');await done;}await rm(directory,{recursive:true,force:true});}
+});

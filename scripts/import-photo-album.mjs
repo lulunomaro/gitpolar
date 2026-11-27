@@ -45,7 +45,22 @@ try {
   let previous=[];
   if (parent) {
     const raw=await git(repo.name,['show',`${parent}:${albumManifestPath}`],{allowFailure:true});
-    if (raw) previous=JSON.parse(raw).photos || [];
+    if (raw) {
+      const older=JSON.parse(raw);
+      previous=older.photos || [];
+      const paths=new Map(manifest.photos.map(p=>[p.path,p]));
+      const albums=new Map(manifest.albums.map(a=>[a.id,a]));
+      for (const photo of previous.filter(p=>p.origin==='album-pr')) {
+        const imported=paths.get(photo.path);
+        if (imported) { imported.origin='album-pr'; continue; }
+        manifest.photos.push(photo);
+        if (!albums.has(photo.albumId)) {
+          const group={...older.albums.find(a=>a.id===photo.albumId),count:0,coverId:photo.id};
+          albums.set(group.id,group); manifest.albums.push(group);
+        }
+        albums.get(photo.albumId).count++;
+      }
+    }
   }
   const records=[];
   const blob=async text => (await git(repo.name,['hash-object','-w','--stdin'],{input:text})).trim();
@@ -61,7 +76,7 @@ try {
   }
   const readme=`# ${title}\n\n拥有者：${owner.name || owner.username}（飞书账号）\n\n[打开可视化相册](/albums/?repo=${encodeURIComponent(repo.name)})\n\n共 ${manifest.photos.length} 张照片，${manifest.albums.length} 个相册。按原目录中的活动日期组织，未提供日期的照片标记为未知，不使用上传时间冒充拍摄时间。\n\n原图保存在 Git LFS；目录、日期索引和每次导入记录保存在 Git 中。轻量克隆可设置 GIT_LFS_SKIP_SMUDGE=1；需要原图时运行 git lfs pull。\n\n原始上传目录保持不变。再次导入会新增一个 Git 提交，旧版本仍可按提交或分支查看。\n`;
   const attributes=['*.jpg','*.JPG','*.jpeg','*.JPEG','*.png','*.PNG','*.gif','*.GIF','*.webp','*.WEBP'].map(ext=>`${ext} filter=lfs diff=lfs merge=lfs -text`).join('\n')+'\n';
-  for (const [path,text] of [[albumManifestPath,manifestText],['README.md',readme],['.gitattributes',attributes]]) records.push(`100644 ${await blob(text)}\t${path}\0`);
+  for (const [path,text] of [[albumManifestPath,JSON.stringify(manifest,null,2)+'\n'],['README.md',readme],['.gitattributes',attributes]]) records.push(`100644 ${await blob(text)}\t${path}\0`);
   await git(repo.name,['update-index','-z','--index-info'],{env,input:records.join('')});
   const tree=(await git(repo.name,['write-tree'],{env})).trim();
   const existingTree=parent ? (await git(repo.name,['rev-parse',`${parent}^{tree}`])).trim() : '';

@@ -26,7 +26,7 @@ node scripts/import-photo-album.mjs \
 ## 浏览与版本
 
 - `/albums/`：相册仓库列表。
-- `/albums/?repo=team-activities`：按活动与年份浏览照片。
+- `/albums/?repo=team-activities`：进入全部照片，左侧活动目录按年份展开。
 - `/albums/?repo=team-activities&ref=分支名或提交ID`：浏览指定版本。
 - 原仓库页保留文件树、分支和 Git Graph；照片路径是 `photos/原有目录/文件名`。
 
@@ -44,11 +44,24 @@ node scripts/import-photo-album.mjs \
 
 ## Serpent 筛片与桌面导出
 
-在仓库首页选择活动，或点「全部照片」跨活动筛片。支持等高排列和瀑布流，两种排版直接使用 Serpent v0.3.8 的布局算法。切换后浏览器记住布局。按年份、星级、标签或名称筛选，打开大图，在「星级与标签」中整理。保存会在当前分支创建小型 JSON 提交，协作者刷新后即可看到。历史提交、标签版本和只读账号均可查看整理结果。
+网页工作区默认显示全部照片。左栏按年份列出活动，中间可以切换等高排列和瀑布流，右栏显示所选照片的预览、文件信息、主色、评分和标签。两侧面板可收起，窄屏通过顶栏按钮打开面板。
 
-在一个活动的照片页打开「导出到 Serpent」并下载 ZIP，解压后在 Serpent 的「导入外部资源库／导入 Eagle 资源库」中选择 `.library` 文件夹。包内含该提交的原图、活动分类、日期、星级、标签和原路径。桌面修改保存在桌面库中。NAS 按请求从 Git LFS 流式导出。
+单击选中，双击或按 Enter 打开大图。用方向键切换大图，按 Esc 返回。Ctrl（macOS 为 Cmd）切换单张选择，Shift 连选。「多选」适合触屏，「…」可以全选当前结果或反选。星级和标签支持批量整理。
 
+### 团队投稿和审核
+
+1. 成员在 `main` 的工作区中点「投稿」，也可以直接向照片区拖入多张图片。选择已有活动，或填写活动名称和日期，新建活动。支持 JPEG、PNG、WebP、GIF，每次最多 200 张，每张最多 64 MiB。
+2. 填好标题后点「提交 PR」。整理现有照片时，在右栏调整评分或增删标签，再点「提交整理 PR」。投稿内容进入独立的 `album-pr/<编号>` 分支。
+3. 仓库负责人从左栏「相册投稿」逐张查看预览。整理稿会并列显示前后星级和标签。点击「合并到 main」后，成员可在主相册看到修改。负责人可关闭投稿并说明原因，投稿人可以撤回自己的待审核投稿。
+
+仓库创建者为负责人。飞书团队账号可投稿，包括只读成员。合并以新的双父提交记录两条历史，冲突会保留为待审核。查看旧提交时可以继续浏览该版本的照片和标注。
+
+在活动的右侧检查器点击「导出活动到 Serpent」，下载 ZIP 并解压，在 Serpent 的「导入 Eagle 资源库」中选择 `.library` 文件夹。导出包括当前版本的原图、分类、日期、星级、标签和原路径。
+
+- `PUT /api/repos/:name/album/pulls/uploads?name=文件名` 上传原图，返回上传标识。
+- `POST /api/repos/:name/album/pulls` 提交已有上传或批量标注。`GET` 同一路径列出投稿，末尾追加 `/编号` 可查看详情。
+- `POST /api/repos/:name/album/pulls/编号/merge` 或 `/close` 提交审核决定，传入已审核的 `expectedHead`。
 - `PUT /api/repos/:name/album/selection?ref=分支` 传入 `id, expectedHead, rating, tags`。星级为 0–5，0 表示未打星。分支更新冲突返回 409。整理信息保存在 `.gitpolar/curation/<活动ID>.json`。
 - `GET /api/repos/:name/album/serpent?ref=提交ID&activity=活动ID` 下载这个活动的 Eagle 兼容资源库。
 
-上游排版源码为 [asset-grid-layout.ts](https://github.com/dolag233/Serpent/blob/b3714d416379ba546abfb5065bf2f447dec43314/src/renderer/asset-grid-layout.ts)，外部库格式对应 [eagle-library.ts](https://github.com/dolag233/Serpent/blob/b3714d416379ba546abfb5065bf2f447dec43314/src/worker/eagle-library.ts)。浏览器本地加载转译后的模块，MIT 许可随模块附在 `albums/vendor/Serpent-LICENSE.txt`。
+范围选择和反选逻辑来自同一版本的 `browse-selection-order.ts`、`selection-modifiers.ts`、`invert-selection.ts`。上游排版源码为 [asset-grid-layout.ts](https://github.com/dolag233/Serpent/blob/b3714d416379ba546abfb5065bf2f447dec43314/src/renderer/asset-grid-layout.ts)，外部库格式对应 [eagle-library.ts](https://github.com/dolag233/Serpent/blob/b3714d416379ba546abfb5065bf2f447dec43314/src/worker/eagle-library.ts)。浏览器本地加载转译后的模块，MIT 许可随模块附在 `albums/vendor/Serpent-LICENSE.txt`。

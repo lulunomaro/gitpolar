@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import { db, getUser, now } from './store.mjs';
 import { repoRoot, dataRoot, namespace, dbPath, lfsRoot } from './config.mjs';
 import { fail } from './auth.mjs';
+import { albumRefError } from './album-policy.mjs';
 
 export const ZERO = '0'.repeat(40);
 export const namePattern = /^[a-z0-9][a-z0-9_-]{0,47}$/;
@@ -57,7 +58,11 @@ export async function createRepository(user, values) {
     await git(name,['config','receive.denyNonFastForwards','false']);
     await git(name,['config','core.logAllRefUpdates','true']);
     await installHook(repo);
-    if(initialize) await commitFiles(repo,user,'main',[{path:'README.md',text:`# ${name}\n\n${description}\n`}],'Initial commit');
+    if(initialize) {
+      const initial=[{path:'README.md',text:`# ${name}\n\n${description}\n`}];
+      if (kind==='album') initial.push({path:'.gitpolar/album.json',text:JSON.stringify({version:1,title:name,albums:[],photos:[]})+'\n'},{path:'.gitattributes',text:'photos/** filter=lfs diff=lfs merge=lfs -text\n'});
+      await commitFiles(repo,user,'main',initial,'Initial commit');
+    }
     if(cad) {
       const attributes=await readFile(fileURLToPath(new URL('../templates/solidworks.gitattributes',import.meta.url)),'utf8');
       const ignore=await readFile(fileURLToPath(new URL('../templates/solidworks.gitignore',import.meta.url)),'utf8');
@@ -77,18 +82,22 @@ export async function branchOverview(repo) {
   const head=(await git(repo.name,['symbolic-ref','--short','HEAD'],{allowFailure:true})).trim()||'main';
   return {branches:refs,defaultBranch:refs.some(b=>b.name===head)?head:refs[0]?.name||head};
 }
-export async function createBranch(repo,name,from) {
+export async function createBranch(repo,name,from,userId) {
   if(typeof name!=='string'||!name||name.length>255||name.startsWith('-')||name==='HEAD')fail(400,'Invalid branch name.');
   await git(repo.name,['check-ref-format','refs/heads/'+name]).catch(()=>fail(400,'Invalid branch name.'));
   if(typeof from!=='string'||!from)fail(400,'A source branch or commit is required.');
   const oid=await resolveRef(repo,from);
+  const restriction = albumRefError(repo,'refs/heads/'+name,userId);
+  if (restriction) fail(403,restriction);
   try {await git(repo.name,['update-ref','--create-reflog','-m','Create branch from '+from,'refs/heads/'+name,oid,ZERO]);}
   catch {fail(409,'This branch already exists or conflicts with an existing branch name.');}
   return {name,oid};
 }
-export async function deleteBranch(repo,name,expectedOid) {
+export async function deleteBranch(repo,name,expectedOid,userId) {
   const {branches:refs,defaultBranch}=await branchOverview(repo),branch=refs.find(b=>b.name===name);
   if(!branch)fail(404,'Branch not found.');
+  const restriction = albumRefError(repo,'refs/heads/'+name,userId);
+  if (restriction) fail(403,restriction);
   if(name===defaultBranch)fail(409,'The default branch cannot be deleted.');
   if(typeof expectedOid!=='string'||!/^[0-9a-f]{40}$/.test(expectedOid))fail(400,'The expected branch commit is required.');
   try {await git(repo.name,['update-ref','-d','refs/heads/'+name,expectedOid]);}
@@ -180,6 +189,8 @@ export async function browse(repo,ref,path='') {
   return {ref,oid,path,file,entries:enriched,readme,branches:refs,commit,locks};
 }
 export async function commitFiles(repo,user,branch,files,message,expectedHead) {
+  const restriction = albumRefError(repo,'refs/heads/'+branch,user.id);
+  if (restriction) fail(403,restriction);
   if(!files.length || files.length>10) fail(400,'Invalid file list.');
   await git(repo.name,['check-ref-format',`refs/heads/${branch}`]).catch(()=>fail(400,'Invalid branch name.'));
   const exists=(await branches(repo)).some(b=>b.name===branch);

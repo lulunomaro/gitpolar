@@ -1,5 +1,6 @@
 // Invoked by Git's pre-receive hook, including pushes from ordinary Git clients.
 import { DatabaseSync } from 'node:sqlite';
+import { albumRefError } from './album-policy.mjs';
 import { execFileSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { dirname,join } from 'node:path';
@@ -8,10 +9,13 @@ const db=new DatabaseSync(process.env.GITPOLAR_DB_PATH,{readOnly:true});
 const repoId=process.env.GITPOLAR_REPO_ID,userId=Number(process.env.GITPOLAR_USER_ID),zero='0'.repeat(40);
 const git=(args,input)=>execFileSync('git',args,{input,encoding:'utf8',maxBuffer:64*1024*1024,windowsHide:true});
 try {
+  const repo=db.prepare('SELECT kind,creator_id FROM repos WHERE id=?').get(repoId);
   const foreign=db.prepare('SELECT l.path,u.username FROM locks l JOIN users u ON u.id=l.owner_id WHERE l.repo_id=? AND l.owner_id<>?').all(repoId,userId);
   const tips=[];
   for(const line of input.trim().split('\n').filter(Boolean)) {
-    const [oldOid,newOid]=line.split(' ');
+    const [oldOid,newOid,ref]=line.split(' ');
+    const restriction=albumRefError(repo,ref,userId);
+    if (restriction) throw new Error(restriction);
     if(newOid===zero)continue;
     tips.push(newOid);
     if(foreign.length) {
