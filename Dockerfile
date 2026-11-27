@@ -11,6 +11,7 @@ COPY --chown=node:node admin ./admin
 COPY --chown=node:node procurement ./procurement
 COPY --chown=node:node login ./login
 COPY --chown=node:node albums ./albums
+COPY --chown=node:node ui ./ui
 COPY --chown=node:node scripts ./scripts
 COPY --chown=node:node templates ./templates
 COPY --chown=node:node assets ./assets

@@ -77,6 +77,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       const previousUser = session?.user?.id;
       session = await api('session'); updateAccount();
       if (previousUser !== session.user?.id) {
+        window.GitpolarGithub?.invalidate();
         workbench = null; repos.length = tickets.length = activity.length = 0; browseCache.clear();
         if (liveEvents) { liveEvents.close(); liveEvents = null; }
       }
@@ -91,12 +92,13 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
         const [catalog, data, personal] = await Promise.all([team ? api('repos') : {repos:[]}, team ? api('issues') : {issues:[]},
           session.capabilities.personalWorkbench ? api('workbench') : null]);
         workbench = personal;
-        repos.splice(0,repos.length,...catalog.repos.map(r=>({...r,updated:relativeTime(r.updated)})));
-        tickets.splice(0,tickets.length,...data.issues.map(t=>({...t,updated:relativeTime(t.updated)})));
+        repos.splice(0,repos.length,...catalog.repos.map(r=>({...r,updatedAt:r.updated,updated:relativeTime(r.updated)})));
+        tickets.splice(0,tickets.length,...data.issues.map(t=>({...t,updatedAt:t.updated,updated:relativeTime(t.updated)})));
         starred = repos.filter(r=>r.starred).map(r=>r.name);
         watched = repos.filter(r=>r.watched).map(r=>r.name);
         activity.splice(0,activity.length,...tickets.slice(0,6).map(t=>({repo:t.repo,kind:'issues',id:t.id})));
       } else {repos.length=0;tickets.length=0;activity.length=0;if(liveEvents){liveEvents.close();liveEvents=null;}}
+      window.GitpolarGithub?.invalidate();
       backendError='';render();
       if(session.user && !session.user.personalOnly && !liveEvents) {
         liveEvents = new EventSource('/api/events');
@@ -120,12 +122,18 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     catch(error){const el=form.querySelector('#login-error');el.hidden=false;el.textContent=error.message;}
   }
   function liveAccount() {
+    if (session?.user && window.GitpolarGithub?.isGithub()) {
+      const user=session.user;
+      openDialog(user.name || user.username, `<div class="account-menu gh-account-menu"><p>Signed in as <strong>${escape(user.username)}</strong></p><a href="#/profile">${icon('person')}Your profile</a><a href="#/profile/repositories">${icon('repo')}Your repositories</a><a href="#/profile/stars">${icon('star')}Your stars</a><a href="#/files">${icon('file')}Your files</a>${!user.personalOnly?`<a href="/albums/">${icon('book')}活动相册</a><a href="/procurement/">${icon('project')}采购与库存</a>`:''}<hr><a href="#/settings/appearance">${icon('gear')}Appearance</a><a href="#/settings/profile">${icon('person')}Settings</a><button data-action="access-tokens">${icon('lock')}Personal access tokens</button>${user.role==='admin'?`<a href="/admin/">${icon('gear')}管理后台</a>`:''}<hr><button data-action="logout">${icon('sign-out')}Sign out</button></div>`,'is-account-menu');
+      return;
+    }
+
     if(!session?.user) return localLogin();
     if (session.user.personalOnly) {
       openDialog(session.user.name || session.user.username, `<div class="account-menu"><button data-action="logout">${icon('sign-out')}退出登录</button></div>`, 'is-account-menu');
       return;
     }
-    openDialog(session.user.username,`<div class="account-menu"><p>Signed in as <strong>${escape(session.user.username)}</strong><br><small>${escape(session.user.role)} · ${escape(session.namespace)}</small></p><button data-action="procurement">${icon('repo')}采购与库存</button>${session.feishuLoginUrl&&session.authProvider!=='feishu'?`<button data-action="feishu-link">${icon('link')}${session.feishuLinked?'飞书账号已绑定':'绑定飞书账号'}</button>`:''}<button data-action="access-tokens">${icon('key' in OCTICONS ? 'key' : 'lock')}Git access tokens</button>${session.user.role==='admin'?`<button data-action="admin">${icon('gear')}管理后台</button>`:''}<button data-action="theme">${icon(theme==='light'?'moon':'sun')}Appearance: ${theme==='light'?'Light':'Dark'}</button><button data-action="logout">${icon('sign-out')}Sign out</button></div>`,'is-account-menu');
+    openDialog(session.user.username,`<div class="account-menu"><a href="#/settings/appearance">${icon('gear')}界面预设 / Appearance</a><a href="#/profile">${icon('person')}个人主页</a><p>Signed in as <strong>${escape(session.user.username)}</strong><br><small>${escape(session.user.role)} · ${escape(session.namespace)}</small></p><button data-action="procurement">${icon('repo')}采购与库存</button>${session.feishuLoginUrl&&session.authProvider!=='feishu'?`<button data-action="feishu-link">${icon('link')}${session.feishuLinked?'飞书账号已绑定':'绑定飞书账号'}</button>`:''}<button data-action="access-tokens">${icon('key' in OCTICONS ? 'key' : 'lock')}Git access tokens</button>${session.user.role==='admin'?`<button data-action="admin">${icon('gear')}管理后台</button>`:''}<button data-action="theme">${icon(theme==='light'?'moon':'sun')}Appearance: ${theme==='light'?'Light':'Dark'}</button><button data-action="logout">${icon('sign-out')}Sign out</button></div>`,'is-account-menu');
   }
   async function tokenMenu() {
     try {
@@ -419,8 +427,9 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     document.querySelector('#account-avatar').innerHTML = avatar('polar-lab', 'large');
   }
   function applyTheme() {
+    if (window.GitpolarAppearance) theme = window.GitpolarAppearance.getTheme();
     document.documentElement.dataset.theme = theme;
-    document.querySelector('meta[name="theme-color"]').content = '#465069';
+    document.querySelector('meta[name="theme-color"]').content = window.GitpolarGithub?.isGithub() ? (theme==='dark'?'#010409':'#f6f8fa') : '#465069';
   }
   function localRepo({ name, description }) {
     return { name, description, language: 'Markdown', tone: 'blue', updated: 'just now',
@@ -464,9 +473,11 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
   function renderNav(repo, tab, page) {
     const sections = session?.user?.personalOnly ? pages.slice(0, 1) : pages;
-    const links = sections.map(([key, label, symbol]) => `<a href="#/${key === 'home' ? '' : key}"${key === page ? ' aria-current="page"' : ''}>${icon(symbol)}${label}</a>`).join('');
+    const github=window.GitpolarGithub?.isGithub();
+    const links = sections.map(([key, label, symbol]) => `<a href="#/${key === 'home' ? '' : key}"${key === page ? ' aria-current="page"' : ''}>${icon(symbol)}${github ? ({home:'Dashboard',repos:'Repositories',issues:'Issues',pulls:'Pull requests'})[key] || label : label}</a>`).join('');
     const tools = onServer && !session?.user?.personalOnly ? `<a href="/albums/">${icon('book')}活动相册</a><a href="/procurement/">${icon('project')}采购与库存</a>${session?.user?.role === 'admin' ? `<a href="/admin/">${icon('gear')}管理后台</a>` : ''}` : '';
-    document.querySelectorAll('.workspace-nav, .drawer-nav').forEach(nav => { nav.innerHTML = links + tools; });
+    const personalLinks = `<a href="#/profile">${icon('person')}Your profile</a><a href="#/files">${icon('file')}个人文件</a><a href="#/settings/appearance">${icon('gear')}Appearance</a>`;
+    document.querySelectorAll('.workspace-nav, .drawer-nav').forEach(nav => { nav.innerHTML = links + personalLinks + tools; });
     const topNav = document.querySelector('#top-nav');
     topNav.hidden = !repo;
     topNav.innerHTML = repo ? Object.entries(tabs).map(([key, [label, symbol]]) => {
@@ -476,7 +487,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     document.querySelector('#pinned-nav').innerHTML = repos.filter(r => pinned.includes(r.name)).map(r => `<a href="${repoHref(r.name)}">${avatar('polar-lab', 'small org')}${namespaceLabel()}/${escape(r.name)}</a>`).join('');
     document.querySelector('#crumb').innerHTML = repo
       ? `<a class="owner-crumb" href="#/repos">${namespaceLabel()}</a><span class="slash" aria-hidden="true">/</span><span>${escape(repo.name)}</span>`
-      : `<span>${pages.find(p => p[0] === page)?.[1] ?? 'Not found'}</span>`;
+      : `<span>${({profile:'Profile',users:name,settings:'Settings',files:'Personal files'})[page] || (github && page==='home'?'Dashboard':pages.find(p => p[0] === page)?.[1] ?? 'Dashboard')}</span>`;
+  }
+  function githubContext() {
+    return {repos,tickets,session,workbench,activity,pinned,api,onServer,avatar,icon,escape,repoHref,starButton,personalFiles,openDialog,notify,hash:location.hash,rerender:render};
   }
   function render() {
     repositoryNavigation.dispose();
@@ -489,6 +503,17 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     view.className = `view${page === 'home' ? ' is-home' : repo ? ' is-repo' : ''}`;
     renderNav(repo, tab==='compare'?'code':tab, page);
     if(onServer && !session?.user) {view.className="view";view.innerHTML=liveWelcome();return;}
+    const gh=window.GitpolarGithub, context=githubContext();
+    if (gh && (page==='settings'||page==='profile'||page==='users'||page==='files'||gh.isGithub()&&(page==='home'||page==='pulls'))) {
+      view.className='view gh-view'+(page==='settings'?' is-settings':'');
+      if(page==='settings')view.innerHTML=gh.settings(context,name||'profile');
+      else if(page==='profile'||page==='users')view.innerHTML=gh.profilePage(context,page==='users'?name:undefined,page==='users'?(parts[2]||'overview'):(name||'overview'));
+      else if(page==='files')view.innerHTML=gh.files(context);
+      else if(page==='pulls')view.innerHTML=gh.pullPage(context);
+      else view.innerHTML=gh.dashboard(context);
+      document.title=(page==='home'?'Dashboard':page==='settings'?'Settings':page==='pulls'?'Pull requests':page==='files'?'Personal files':'Profile')+' · gitpolar';
+      return;
+    }
     if(session?.user?.personalOnly) { view.className='view is-home'; view.innerHTML=dashboard(); document.title='个人工作台 · gitpolar'; return; }
     if(onServer && repo && tab==='graph'){window.GitpolarGraph?.mount(view,repo,query);document.title='Git Graph · '+repo.name+' · gitpolar';return;}
     if(onServer && repo && tab==='compare'){window.GitpolarComparison?.mount(view,repo,query);document.title='Compare · '+repo.name+' · gitpolar';return;}
@@ -500,6 +525,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     else if (page === 'repos' && !name) view.innerHTML = repoIndex() + footer();
     else if (page === 'issues' || page === 'pulls') view.innerHTML = ticketPage(page) + footer();
     else view.innerHTML = empty('Not found', 'The page you are looking for does not exist.');
+    if(page==='repos'&&!name&&query.has('q')) { document.querySelector('#repo-filter').value=query.get('q'); filterRepos(); }
     if(onServer&&repo&&tab==='code')repositoryNavigation.mount(repo);
     window.GitpolarPreview?.mount(document.querySelector('[data-cad-viewer]'));
     document.title = repo ? `${tab === 'code' ? '' : tabs[tab]?.[0] + ' · '}${namespaceLabel()}/${repo.name} · gitpolar` : 'gitpolar';
@@ -605,7 +631,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       <ul class="list" id="repo-results">${repos.map(repoRow).join('')}</ul></section>`;
   }
   function repoRow(repo) {
-    return `<li class="repo-row"><div class="repo-row-main"><h2><a href="${repoHref(repo.name)}">${escape(repo.name)}</a><span class="label">${escape(repo.visibility || 'Public')}</span></h2><p>${escape(repo.description)}</p><div class="repo-metadata">${language(repo)}${onServer&&repo.kind==='album'?`<a href="/albums/?repo=${encodeURIComponent(repo.name)}">${icon('book')}打开相册</a><span>拥有者 ${escape(repo.creator?.name||repo.creator?.username||'')}</span>`:''}<span>${icon('star')}${starred.includes(repo.name) ? 1 : 0}</span><span>Updated ${escape(repo.updated)}</span></div></div>${starButton(repo)}</li>`;
+    return `<li class="repo-row"><div class="repo-row-main"><h2><a href="${repoHref(repo.name)}">${escape(repo.name)}</a><span class="label">${escape(repo.visibility || 'Public')}</span></h2><p>${escape(repo.description)}</p><div class="repo-metadata">${language(repo)}${onServer&&repo.kind==='album'?`<a href="/albums/?repo=${encodeURIComponent(repo.name)}">${icon('book')}打开相册</a><span>拥有者 ${escape(repo.creator?.name||repo.creator?.username||'')}</span>`:''}<span>${icon('star')}${onServer ? repo.starCount : starred.includes(repo.name) ? 1 : 0}</span><span>Updated ${escape(repo.updated)}</span></div></div>${starButton(repo)}</li>`;
   }
   function filterRepos() {
     const needle = document.querySelector('#repo-filter').value.toLowerCase();
@@ -700,7 +726,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     const single = repo.language !== 'JavaScript';
     return `<aside class="repo-about" aria-label="Repository information">
       <section class="about-section"><div class="section-head"><h2>About</h2><a class="icon-link" href="${repoHref(repo.name, 'settings')}" aria-label="Edit repository details">${icon('gear')}</a></div><p>${escape(repo.description)}</p><div class="topic-tags"><span class="topic">robotics</span><span class="topic">simulation</span><span class="topic">polar-lab</span></div><div class="about-links">
-        <a href="${repoHref(repo.name)}" data-action="readme" data-repo="${name}">${icon('book')}Readme</a><a href="${repoHref(repo.name, 'code', 'main', 'LICENSE')}">${icon('shield')}MIT license</a><a href="${repoHref(repo.name, 'insights')}">${icon('graph')}Activity</a><span>${icon('star')}<strong>${starred.includes(repo.name) ? 1 : 0}</strong> stars</span><span>${icon('eye')}<strong>${watched.includes(repo.name) ? 1 : 0}</strong> watching</span><span>${icon('repo-forked')}<strong>0</strong> forks</span></div></section>
+        <a href="${repoHref(repo.name)}" data-action="readme" data-repo="${name}">${icon('book')}Readme</a><a href="${repoHref(repo.name, 'code', 'main', 'LICENSE')}">${icon('shield')}MIT license</a><a href="${repoHref(repo.name, 'insights')}">${icon('graph')}Activity</a><span>${icon('star')}<strong>${onServer ? repo.starCount : starred.includes(repo.name) ? 1 : 0}</strong> stars</span><span>${icon('eye')}<strong>${watched.includes(repo.name) ? 1 : 0}</strong> watching</span><span>${icon('repo-forked')}<strong>0</strong> forks</span></div></section>
       <section class="about-section"><h2>Releases</h2><small>No releases published</small></section><section class="about-section"><h2>Packages</h2><small>No packages published</small></section>
       <section class="about-section"><h2>Contributors <span class="count">3</span></h2><a class="contributors" href="${repoHref(repo.name, 'insights')}" aria-label="View contributors">${['linan','yuchen','momo'].map(n => avatar(n, 'large')).join('')}</a></section>
       <section class="about-section"><h2>Languages</h2><div class="language-bar${single ? ' language-single lang-' + repo.language.toLowerCase() : ''}">${single ? '' : '<span class="language-primary"></span><span class="language-secondary"></span><span class="language-other"></span>'}</div><div class="language-legend">${language(repo)}${single ? '<span class="muted">100.0%</span>' : '<span class="muted">78.0%</span><span><i class="lang-css"></i>CSS <span class="muted">14.0%</span></span><span><i class="lang-html"></i>HTML <span class="muted">8.0%</span></span>'}</div></section>
@@ -945,7 +971,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       case 'login': login(); break;
       case 'account': showAccount(); break;
       case 'logout': logout(); break;
-      case 'theme': theme = theme === 'light' ? 'dark' : 'light'; write('theme',theme); applyTheme(); showAccount(); break;
+      case 'theme': window.GitpolarAppearance.save({colorMode:theme==='light'?'dark':'light'}).then(showAccount).catch(error=>notify(error.message)); break;
       case 'close': dialog.close(); break;
       case 'star': if(onServer){api(`repos/${name}/preferences`,{method:'POST',body:{kind:'star',enabled:!starred.includes(name)}}).then(refreshLive).catch(error=>notify(error.message));break;} starred = starred.includes(name) ? starred.filter(n => n !== name) : [...starred,name]; write('starred',starred); render(); break;
       case 'watch': if(onServer){api(`repos/${name}/preferences`,{method:'POST',body:{kind:'watch',enabled:!watched.includes(name)}}).then(refreshLive).catch(error=>notify(error.message));break;} watched = watched.includes(name) ? watched.filter(n => n !== name) : [...watched,name]; write('watched',watched); render(); break;
@@ -1007,6 +1033,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   document.querySelector('#menu-close').addEventListener('click', () => setMenu(false));
   rail.addEventListener('close', () => menu.setAttribute('aria-expanded',String(rail.open)));
   rail.addEventListener('click', event => { if (event.target === rail && event.clientX > rail.getBoundingClientRect().right) setMenu(false); });
+  window.addEventListener('gitpolar:appearance', () => { applyTheme(); render(); });
   window.addEventListener('hashchange', () => { if(dialog.open)dialog.close(); setMenu(false); ticketState = 'open'; render(); window.scrollTo(0,0); view.focus({preventScroll:true}); });
 
   repos.forEach(repo => { const details = read(`details:${repo.name}`,null); if (typeof details?.description === 'string') repo.description = details.description; });

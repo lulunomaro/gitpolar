@@ -15,7 +15,7 @@ async function collect(path){
   if(info.isDirectory()){for(const entry of await readdir(resolve(root,path),{withFileTypes:true})){if(!entry.isSymbolicLink())await collect(path+'/'+entry.name);}}
   else if(path!=='assets/gitpolar-original.png')files.push(path);
 }
-roots.push('albums');
+roots.push('albums','ui');
 for(const path of roots)await collect(path);
 if(files.some(path=>path==='.env'||path.startsWith('data/')||path.startsWith('node_modules/')))throw new Error('Unexpected private or runtime files in deployment package.');
 await mkdir(dirname(output),{recursive:true});

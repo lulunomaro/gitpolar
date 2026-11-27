@@ -1,3 +1,4 @@
+import { interfaceApi } from './interface.mjs';
 import { workbenchApi } from './workbench.mjs';
 import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -31,6 +32,7 @@ function account(req,res,mutate=false) {
   if(mutate&&!auth.token)requireOrigin(req);return auth.user;
 }
 export async function api(req,res,pathname,params,changed,events) {
+  if(pathname.startsWith('/api/me/') || pathname.startsWith('/api/profiles/')) return interfaceApi(req,res,pathname,params);
   if(pathname === '/api/workbench' || pathname.startsWith('/api/workbench/')) return workbenchApi(req,res,pathname,params);
   if(pathname.startsWith('/api/feishu-cli/'))return feishuCliApi(req,res,pathname,params);
   if(pathname.startsWith('/api/procurement/feishu/'))return warehouseApi(req,res,pathname,params);
@@ -101,7 +103,7 @@ export async function api(req,res,pathname,params,changed,events) {
     const proposalRoute = match[2]==='album/pulls' || match[2]?.startsWith('album/pulls/');
     const starTarget = /^album\/stars\/(activity|photo)\/([a-f0-9]{24})$/.exec(match[2] || '');
     const write = !['GET','HEAD'].includes(req.method);
-    const user = (proposalRoute || starTarget) ? account(req,res,write) : requireAuth(req,res,write);
+    const user = (proposalRoute || starTarget || match[2]==='preferences') ? account(req,res,write) : requireAuth(req,res,write);
     const repo=repository(match[1]);if(!repo)fail(404,'Repository not found.');
     const expectedRepositoryId=req.headers['x-gitpolar-repository-id'];
     if(expectedRepositoryId!==undefined&&expectedRepositoryId!==repo.id)fail(409,'Repository identity does not match the selected repository. Resolve the document context again.');

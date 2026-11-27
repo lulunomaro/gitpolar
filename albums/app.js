@@ -26,6 +26,7 @@ const narrow = matchMedia('(max-width:680px)'),
   mid = matchMedia('(max-width:900px)');
 const systemTheme = matchMedia('(prefers-color-scheme: dark)');
 function theme() {
+  if (window.GitpolarAppearance) { document.documentElement.dataset.theme = window.GitpolarAppearance.getTheme(); return; }
   let pref;
   try {
     pref = JSON.parse(localStorage.getItem('branchline:theme'));
@@ -36,6 +37,7 @@ function theme() {
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   document.querySelector('meta[name="theme-color"]').content = dark ? '#242528' : '#e5e5e9';
 }
+addEventListener('gitpolar:appearance', theme);
 theme();
 systemTheme.addEventListener('change', theme);
 addEventListener('storage', theme);

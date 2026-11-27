@@ -1,0 +1,20 @@
+{
+  "name": "原版工作区",
+  "id": "workspace",
+  "savedAt": "2026-11-28",
+  "sourceRelease": "/opt/gitpolar/releases/gitpolar-album-workspace-i0wmmhwx",
+  "files": {
+    "index.html": "47699863ea8e668740d4ce503ddaea5633f583f59596d001d62bbe31ede21bb7",
+    "app.js": "87273c734e8602f9cb5bed8e568d4cc2904086e06279b9f7a00f752b5773f7b9",
+    "styles.css": "8861d1b6e010d78238d06fee8f229cbad11c4ae6e38056c7aeb156455749a0aa",
+    "albums/index.html": "76b379ec6a54709a03f966697e0c31229d9d21a9a8423351828c2d83b425561a",
+    "albums/app.js": "dd34b563b650622cfa3a6a16ffa65f3cf03ba062a2f93ca8d74ab487ecedbff4",
+    "albums/styles.css": "71cbe48dff24db34403cd13b6ec6c38ae427ed27d02dd19ce59e3dca475d2134",
+    "admin/index.html": "c1f3b5e65eb795a6e85a9150183635d8f6a32142902104f682cd60f448551544",
+    "admin/admin.css": "822058c635dc1ccd726a75f74b7d1a49797e93d7676a7641b9cae4692a0137b1",
+    "procurement/index.html": "286782da4913d5116455b1311f84a5dad6b704dcdeacf36f773e6c074dcae19d",
+    "procurement/styles.css": "e5dfbd3c872298c98c46e7f96bd4ae40e747237ea44b3f6657e930638742235d",
+    "login/index.html": "5546d2a57546c044b6705fc94a84d83599d3b11d9747122a68a8a8db48722dfa",
+    "login/styles.css": "4dc0ca99402ec59ca1f95c53a6a8f32e62e20de4678ccbf41559b6b12a4bf9f0"
+  }
+}
