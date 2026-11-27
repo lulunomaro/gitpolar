@@ -137,7 +137,8 @@ function sidebar() {
       ? [
           nav('全部照片', '#/photos', 'grid', photos.length, 'photos'),
           nav('活动相册', '#/activities', 'albums', activities.length, 'activities'),
-          nav('已打星', '#/starred', 'star', photos.filter((p) => p.rating > 0).length, 'starred'),
+          nav('我的 Star', '#/stars', 'star', myStarCount(), 'stars'),
+          nav('已评分', '#/starred', 'select', photos.filter((p) => p.rating > 0).length, 'starred'),
         ]
       : [nav('相册仓库', '/albums/', 'albums', loaded ? repos.length : null, 'repos')])
   );
@@ -177,7 +178,7 @@ function reviewNav() {
 }
 function markNav() {
   for (const a of document.querySelectorAll('.nav-item')) {
-    if (a.dataset.key === routeKey) {
+    if (a.dataset.key === routeKey || (a.dataset.key === 'stars' && routeKey === 'star-activities')) {
       a.setAttribute('aria-current', 'page');
       if (a.closest('.tree')) a.closest('.tree').open = true;
     } else a.removeAttribute('aria-current');
@@ -273,20 +274,34 @@ function route() {
             : !hash || hash === '#/photos'
               ? 'photos'
               : 'missing');
+  if (repo && hash === '#/stars') routeKey = 'stars';
+  if (repo && hash === '#/stars/activities') routeKey = 'star-activities';
   const album = albumMap.get(routeKey);
-  kind = album || ['photos', 'starred'].includes(routeKey) ? 'photos' : routeKey;
+  kind = album || ['photos', 'starred', 'stars'].includes(routeKey) ? 'photos' : routeKey;
+  if (routeKey === 'star-activities') kind = 'activities';
   if (id && !album) kind = 'missing';
   const title =
     album?.title ||
-    { photos: '全部照片', starred: '已打星', activities: '活动相册', pulls: '相册投稿', repos: '相册仓库' }[
-      routeKey
-    ] ||
+    {
+      photos: '全部照片',
+      starred: '已评分',
+      stars: '我的 Star',
+      'star-activities': '我的 Star',
+      activities: '活动相册',
+      pulls: '相册投稿',
+      repos: '相册仓库',
+    }[routeKey] ||
     '未找到活动';
   const symbol = { photos: 'grid', activities: 'albums', pulls: 'pull', repos: 'layers' }[kind] || 'folder';
   text('heading', title);
   text('tab-title', title);
   document.title = `${title} · ${repo?.title || '相册'} · Gitpolar`;
-  $('heading-icon').replaceChildren(icon(album ? 'folder' : routeKey === 'starred' ? 'star' : symbol));
+  $('heading-icon').replaceChildren(icon(album ? 'folder' : isStarView() ? 'star' : symbol));
+  $('activity-star').hidden = !album;
+  $('activity-star').replaceChildren(...(album ? [starButton('activity', album)] : []));
+  $('star-tabs').hidden = !isStarView();
+  $('stars-photos').setAttribute('aria-current', routeKey === 'stars' ? 'page' : 'false');
+  $('stars-activities').setAttribute('aria-current', routeKey === 'star-activities' ? 'page' : 'false');
   $('reload-pulls').hidden = kind !== 'pulls';
   $('filters').hidden = ['missing', 'pulls'].includes(kind);
   $('layout-tools').hidden = kind !== 'photos';
@@ -362,6 +377,7 @@ function renderResults(autoSelect = false) {
   const title = (o) => o.name || o.title || '';
   results = items
     .filter((o) => {
+      if (isStarView() && !o.starred) return false;
       const ys = o.years || [o.year || o.date?.slice(0, 4) || '日期未知'];
       if (year && !ys.includes(year)) return false;
       if (
@@ -417,9 +433,13 @@ function renderResults(autoSelect = false) {
         ? '未找到这个活动'
         : changed
           ? '没有符合条件的结果'
-          : routeKey === 'starred'
-            ? '还没有已打星的照片'
-            : '这里还没有内容',
+          : isStarView()
+            ? kind === 'photos'
+              ? '还没有收藏的照片'
+              : '还没有收藏的活动合集'
+            : routeKey === 'starred'
+              ? '还没有已评分的照片'
+              : '这里还没有内容',
       '',
       changed ? button('清除筛选', resetFilters) : kind === 'missing' ? link('返回全部照片', '#/photos') : null
     );
@@ -436,6 +456,101 @@ for (const id of ['year', 'rating', 'tag', 'sort', 'search'])
   $(id).addEventListener(id === 'search' ? 'input' : 'change', () => {
     if (loaded) renderResults();
   });
+const savingStars = new Set();
+let starEpoch = 0;
+async function refreshStars() {
+  const snapshot = repo;
+  if (!snapshot || savingStars.size) return;
+  const epoch = ++starEpoch;
+  try {
+    const totals = await request(api + '/stars?' + new URLSearchParams({ ref: snapshot.oid }));
+    if (epoch !== starEpoch || repo !== snapshot) return;
+    let changed = false;
+    for (const [type, records] of [
+      ['activity', albumMap],
+      ['photo', photoMap],
+    ]) {
+      const current = new Map(totals[type].map((item) => [item.id, item]));
+      for (const [id, item] of records) {
+        const summary = current.get(id) || { starred: false, starCount: 0 };
+        if (item.starred === summary.starred && item.starCount === summary.starCount) continue;
+        item.starred = summary.starred;
+        item.starCount = summary.starCount;
+        changed = true;
+        for (const b of document.querySelectorAll(`[data-star="${type}:${id}"]`))
+          updateStarButton(b, type, item);
+      }
+    }
+    if (changed) {
+      const total = $('views').querySelector('[data-key="stars"] small');
+      if (total) total.textContent = myStarCount();
+      if (isStarView()) renderResults();
+    }
+  } catch {
+    /* Keep the displayed snapshot until the next refresh. */
+  }
+}
+function isStarView() {
+  return routeKey === 'stars' || routeKey === 'star-activities';
+}
+function myStarCount() {
+  return (repo?.photos.filter((p) => p.starred).length || 0) + activities.filter((a) => a.starred).length;
+}
+function updateStarButton(control, type, item) {
+  const label = item.starred ? '取消收藏' : '收藏';
+  const what = type === 'photo' ? '照片' : '活动';
+  const count = item.starCount || 0;
+  control.title = `${label}${what} · ${count} 人收藏`;
+  control.setAttribute('aria-label', `${label}${what} ${item.name || item.title}（${count} 人收藏）`);
+  control.setAttribute('aria-pressed', String(Boolean(item.starred)));
+  control.disabled = savingStars.has(type + ':' + item.id);
+  control.replaceChildren(icon('star'));
+  if (!control.classList.contains('star-corner'))
+    control.append(el('span', 'star-label', item.starred ? 'Starred' : 'Star'));
+  control.append(el('span', 'star-count', count));
+}
+function starButton(type, item, compact = false) {
+  const control = button(
+    '',
+    () => toggleStar(type, item.id),
+    compact ? 'asset-star star-corner' : 'asset-star'
+  );
+  control.dataset.star = type + ':' + item.id;
+  updateStarButton(control, type, item);
+  return control;
+}
+async function toggleStar(type, id) {
+  const key = type + ':' + id;
+  const records = type === 'photo' ? photoMap : albumMap;
+  const item = records.get(id);
+  if (!item || savingStars.has(key)) return;
+  const controls = () => document.querySelectorAll(`[data-star="${key}"]`);
+  starEpoch++;
+  savingStars.add(key);
+  for (const b of controls()) b.disabled = true;
+  try {
+    const summary = await request(`${api}/stars/${type}/${id}?${new URLSearchParams({ ref: repo.oid })}`, {
+      method: item.starred ? 'DELETE' : 'PUT',
+    });
+    Object.assign(item, summary);
+    const latest = (type === 'photo' ? photoMap : albumMap).get(id);
+    if (latest && latest !== item) Object.assign(latest, summary);
+    const total = $('views').querySelector('[data-key="stars"] small');
+    if (total) total.textContent = myStarCount();
+    if (isStarView()) {
+      const scrollTop = $('scroll').scrollTop;
+      renderResults();
+      $('scroll').scrollTop = scrollTop;
+    }
+  } catch (error) {
+    const message = '收藏未保存 · ' + error.message;
+    text('status', message);
+    if ($('viewer').open) text('viewer-meta', message);
+  } finally {
+    savingStars.delete(key);
+    for (const b of controls()) updateStarButton(b, type, item);
+  }
+}
 function card(p, index) {
   const isPhoto = kind === 'photos',
     isRepo = kind === 'repos',
@@ -483,7 +598,11 @@ function appendPage() {
     const c = card(results[shown], shown);
     if (kind === 'photos') {
       const tile = el('div', 'tile');
-      tile.append(c);
+      tile.append(c, starButton('photo', results[shown], true));
+      fragment.append(tile);
+    } else if (kind === 'activities') {
+      const tile = el('div', 'album-tile');
+      tile.append(c, starButton('activity', results[shown], true));
       fragment.append(tile);
     } else fragment.append(c);
   }
@@ -758,6 +877,11 @@ function inspector() {
         : `${sizeText(photo.size)} · ${photo.width} × ${photo.height} · ${typeName(photo)}`
     )
   );
+  if (!many) {
+    const actions = el('div', 'inspect-star');
+    actions.append(starButton('photo', photo));
+    box.append(actions);
+  }
   const all = ids.map((id) => photoMap.get(id)),
     commonTags = photo.tags.filter((t) => all.every((p) => p.tags.includes(t)));
   const tags = section(many ? '共同标签' : '标签'),
@@ -923,6 +1047,7 @@ function openPhoto(index) {
 function displayPhoto() {
   const p = viewing[viewerIndex];
   text('viewer-name', p.name);
+  $('viewer-star').replaceChildren(starButton('photo', p));
   $('stage').replaceChildren(media(p.previewUrl, p.name));
   text('viewer-meta', [p.width + ' × ' + p.height, sizeText(p.size), dateText(p)].filter(Boolean).join(' · '));
   text('position', `${viewerIndex + 1} / ${viewing.length}`);
@@ -1015,7 +1140,18 @@ $('scroll').addEventListener('drop', (e) => {
   if (repo && ref === 'main') collab.upload([...e.dataTransfer.files]);
 });
 $('reload-pulls').onclick = refreshPulls;
-$('review-nav').addEventListener('click', () => { if (kind === 'pulls') refreshPulls(); });
-document.addEventListener('visibilitychange', () => { if (repo && !document.hidden) refreshPulls(); });
-addEventListener('hashchange', () => { route(); if (kind === 'pulls') refreshPulls(); });
+$('review-nav').addEventListener('click', () => {
+  if (kind === 'pulls') refreshPulls();
+});
+document.addEventListener('visibilitychange', () => {
+  if (repo && !document.hidden) {
+    refreshPulls();
+    refreshStars();
+  }
+});
+addEventListener('hashchange', () => {
+  route();
+  if (kind === 'pulls') refreshPulls();
+  if (isStarView()) refreshStars();
+});
 load();

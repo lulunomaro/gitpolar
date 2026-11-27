@@ -9,6 +9,8 @@ import { filePath, fileMeta, fileContent, resolveRef, git } from './git.mjs';
 import { objectPath } from './lfs.mjs';
 import { readSelections, saveSelection, isEditableBranch, unmarked } from './album-curation.mjs';
 
+import { albumStarSummary, setAlbumStar } from './album-stars.mjs';
+
 export const albumManifestPath = '.gitpolar/album.json';
 export const albumPreviewRoot = join(dataRoot, 'album-previews');
 const imageTypes = new Map([['.jpg','image/jpeg'],['.jpeg','image/jpeg'],['.png','image/png'],['.gif','image/gif'],['.webp','image/webp']]);
@@ -58,9 +60,27 @@ export async function savePhotoSelection(repo,user,ref,input) {
   return saveSelection(repo,user,ref,input,await loadAlbum(repo,ref));
 }
 
-export async function albumView(repo, ref = 'main', writable = false) {
+export async function visibleAlbumStars(repo, userId, ref) {
+  const {manifest} = await loadAlbum(repo, ref);
+  const stars = albumStarSummary(repo.id, userId);
+  const visible = (items, values) => items.filter(item => values.has(item.id))
+    .map(item => ({id:item.id, ...values.get(item.id)}));
+  return {activity:visible(manifest.albums,stars.activity), photo:visible(manifest.photos,stars.photo)};
+}
+
+export async function changeAlbumStar(repo, user, ref, kind, targetId, enabled) {
+  const {manifest} = await loadAlbum(repo, ref);
+  const targets = kind === 'activity' ? manifest.albums : manifest.photos;
+  if (!targets.some(item => item.id === targetId)) fail(404,'这个相册版本中找不到收藏对象。');
+  return setAlbumStar(repo.id, user.id, kind, targetId, enabled);
+}
+
+export async function albumView(repo, ref = 'main', writable = false, userId = null) {
   const {oid,manifest,selections} = await loadAlbum(repo, ref);
+  const stars = userId == null ? null : albumStarSummary(repo.id,userId);
+  const noStars = {starCount:0,starred:false};
   const photos = manifest.photos.map(p => ({
+    ...(stars?.photo.get(p.id) ?? noStars),
     id:p.id,path:p.path,name:p.name || p.path.split('/').at(-1),albumId:p.albumId,
     date:p.date || '',dateSource:p.dateSource || 'unknown',year:p.year || '',
     width:p.width,height:p.height,size:p.size,...(selections.get(p.albumId)?.get(p.id) || unmarked),
@@ -70,7 +90,7 @@ export async function albumView(repo, ref = 'main', writable = false) {
   for (const photo of photos) byAlbum.get(photo.albumId).push(photo);
   const albums = manifest.albums.map(a => {
     const items = byAlbum.get(a.id),cover = items.find(p => p.id === a.coverId) || items[0];
-    return {id:a.id,title:a.title,path:a.path,date:a.date || '',dateEnd:a.dateEnd || '',datePrecision:a.datePrecision || 'unknown',year:a.year || '',count:items.length,coverId:cover?.id || '',coverUrl:cover?.thumbUrl || ''};
+    return {...(stars?.activity.get(a.id) ?? noStars),id:a.id,title:a.title,path:a.path,date:a.date || '',dateEnd:a.dateEnd || '',datePrecision:a.datePrecision || 'unknown',year:a.year || '',count:items.length,coverId:cover?.id || '',coverUrl:cover?.thumbUrl || ''};
   }).filter(a => a.count);
   const canEdit = writable && await isEditableBranch(repo,ref);
   return {canEdit,name:repo.name,title:manifest.title || repo.name,description:repo.description,ref,oid,owner:getUser(repo.creator_id),importedAt:manifest.importedAt,stats:{photos:photos.length,albums:albums.length,bytes:photos.reduce((sum,p) => sum+p.size,0)},albums,photos};

@@ -53,6 +53,18 @@ test('team members propose, only the album owner merges, and concurrent PRs keep
     const merged=await call(url+'/merge',owner,'POST',decision);assert.equal(merged.state,'merged');
     assert.equal((await call(url+'/merge',owner,'POST',decision)).decisionOid,merged.decisionOid);
     const photos=await call(api,member), photo=photos.photos[0];assert.deepEqual(await call(photo.originalUrl,member),png);
+    const photoStar = api + '/stars/photo/' + photo.id, activityStar = api + '/stars/activity/' + photo.albumId;
+    await call(photoStar, '', 'PUT', null, 401);
+    await call(photoStar, member, 'PUT', null, 403, {origin:'http://elsewhere.invalid'});
+    await call(photoStar+'?ref='+initial.oid, member, 'PUT', null, 404);
+    for (const method of ['PUT','PUT']) assert.deepEqual(await call(photoStar, member, method), {starCount:1,starred:true});
+    assert.deepEqual(await call(activityStar, member, 'PUT'), {starCount:1,starred:true});
+    const otherView = await call(api, owner);
+    assert.equal(otherView.photos[0].starred, false); assert.equal(otherView.photos[0].starCount, 1);
+    assert.equal(otherView.photos[0].rating, 0); assert.equal(otherView.oid, photos.oid);
+    assert.deepEqual(await call(photoStar, owner, 'PUT'), {starCount:2,starred:true});
+    for (const method of ['DELETE','DELETE']) assert.deepEqual(await call(photoStar, member, method), {starCount:1,starred:false});
+    assert.equal((await call(api,member)).albums[0].starred,true);
     const bare=join(directory,'repositories','polar-lab','events.git');
     const parents=(await exec('git',['--git-dir',bare,'show','-s','--format=%P',merged.decisionOid])).stdout.trim().split(' ');
     assert.deepEqual(parents,[initial.oid,pr.head]);

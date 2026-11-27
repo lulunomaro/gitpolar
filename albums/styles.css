@@ -1355,3 +1355,114 @@ dialog::backdrop {
 .pr-row > .icon {
   color: var(--accent);
 }
+.album-tile {
+  position: relative;
+  min-width: 0;
+}
+.tile .card-body,
+.album-tile .card-body {
+  padding-right: 48px;
+}
+.asset-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 8px;
+  background: var(--card);
+  color: var(--sub);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.asset-star:hover {
+  background: var(--hover);
+}
+.asset-star > .icon {
+  width: 15px;
+  height: 15px;
+}
+.asset-star[aria-pressed='true'] > .icon {
+  color: #a17808;
+  fill: #eac04c;
+  stroke-width: 1.7;
+}
+.star-count {
+  font:
+    11px/15px ui-monospace,
+    Consolas,
+    monospace;
+  background: var(--pane);
+  border-radius: 8px;
+  padding: 0 5px;
+}
+.star-corner {
+  position: absolute;
+  right: 6px;
+  bottom: 10px;
+  padding: 3px;
+  gap: 2px;
+  border-color: transparent;
+  background: transparent;
+  min-height: 25px;
+}
+.star-corner .star-count {
+  background: transparent;
+  padding: 0 1px;
+}
+.star-corner .icon {
+  width: 14px;
+  height: 14px;
+}
+.star-corner:hover,
+.star-corner:focus-visible {
+  border-color: var(--line);
+  background: var(--pane);
+}
+.inspect-star {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+.star-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--pane);
+  padding: 0 15px 6px;
+}
+.star-tabs a {
+  border-radius: 5px;
+  padding: 4px 9px;
+  color: var(--sub);
+  font-size: 12px;
+}
+.star-tabs a[aria-current='page'] {
+  background: var(--tint);
+  color: var(--accent);
+  font-weight: 600;
+}
+.lightbox .asset-star {
+  --pane: #36373e;
+}
+.lightbox .star-count {
+  flex: none;
+}
+@media (max-width: 680px) {
+  .star-tabs {
+    padding-inline: 8px;
+  }
+  .star-corner {
+    min-height: 30px;
+    right: 3px;
+    bottom: 7px;
+  }
+  .toolbar:has(#activity-star:not([hidden])) .heading-icon {
+    display: none;
+  }
+  #activity-star .star-label {
+    display: none;
+  }
+}

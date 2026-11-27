@@ -76,6 +76,7 @@
             <h1 id="heading">相册工作区</h1>
             <span class="pill" id="total" hidden></span>
           </div>
+          <div id="activity-star" hidden></div>
           <div class="toolbar-actions" id="layout-tools" hidden>
             <button class="tool" id="justified" aria-label="等高排列" title="等高排列">
               <i data-icon="rows"></i></button
@@ -85,11 +86,17 @@
               ><input type="range" id="size" min="110" max="270" step="10" value="190" aria-label="缩略图大小"
             /></label>
           </div>
-          <button class="tool" id="reload-pulls" aria-label="刷新投稿" title="刷新投稿" hidden><i data-icon="refresh"></i></button>
+          <button class="tool" id="reload-pulls" aria-label="刷新投稿" title="刷新投稿" hidden>
+            <i data-icon="refresh"></i>
+          </button>
           <button class="primary compact" id="upload" hidden>
             <i data-icon="upload"></i><span>投稿</span>
           </button>
         </div>
+        <nav class="star-tabs" id="star-tabs" aria-label="收藏类型" hidden>
+          <a href="#/stars" id="stars-photos">照片</a
+          ><a href="#/stars/activities" id="stars-activities">活动合集</a>
+        </nav>
         <div class="filterbar" id="filters" hidden>
           <label class="filter"
             ><i data-icon="calendar"></i
@@ -169,7 +176,9 @@
         <button class="tool" id="next" aria-label="下一张"><i data-icon="right"></i></button>
       </div>
       <footer>
-        <span id="viewer-meta"></span><span id="position"></span
+        <span id="viewer-meta"></span>
+        <div id="viewer-star"></div>
+        <span id="position"></span
         ><a id="original" class="secondary" download><i data-icon="download"></i>原图</a>
       </footer>
     </dialog>

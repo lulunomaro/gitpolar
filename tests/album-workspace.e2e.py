@@ -77,6 +77,22 @@ def exercise(origin, browser):
     editor.goto(url)
     cards = editor.locator('#gallery .card')
     expect(cards).to_have_count(5)
+    photo_star = editor.locator('.tile .asset-star').first
+    photo_star.click(); expect(photo_star).to_have_attribute('aria-pressed','true')
+    editor.locator('.nav-item[data-key=activities]').click()
+    album_star = editor.locator('.album-tile .asset-star').first
+    album_star.click(); expect(album_star).to_have_attribute('aria-pressed','true')
+    editor.locator('.nav-item[data-key=stars]').click(); expect(cards).to_have_count(1)
+    editor.locator('#stars-activities').click();expect(editor.locator('.album-tile')).to_have_count(1)
+    editor.locator('.album-tile .card').click();expect(editor.locator('#activity-star .asset-star')).to_have_attribute('aria-pressed','true')
+    editor.reload();expect(editor.locator('#activity-star .star-count')).to_have_text('1')
+    reviewer.goto(url); other_star=reviewer.locator('.tile .asset-star').first
+    expect(other_star).to_have_attribute('aria-pressed','false');expect(other_star.locator('.star-count')).to_have_text('1')
+    other_star.click();expect(other_star.locator('.star-count')).to_have_text('2')
+    editor.goto(url+'#/stars');expect(editor.locator('.tile .asset-star .star-count')).to_have_text('2')
+    cards.first.dblclick();editor.locator('#viewer-star .asset-star').click();expect(editor.locator('#viewer-star .star-count')).to_have_text('1')
+    editor.keyboard.press('Escape');expect(cards).to_have_count(0)
+    editor.locator('.nav-item[data-key=photos]').click(); expect(cards).to_have_count(5)
     cards.nth(1).click(); expect(editor.locator('#viewer')).not_to_be_visible()
     cards.nth(3).click(modifiers=['Shift']); expect(editor.locator('.card[aria-pressed=true]')).to_have_count(3)
     cards.nth(0).click(modifiers=['Control']); expect(editor.locator('.card[aria-pressed=true]')).to_have_count(4)
@@ -120,6 +136,6 @@ if __name__ == '__main__':
             else:raise RuntimeError('Isolated server did not start.')
             with sync_playwright() as p:
                 browser = p.chromium.launch(args=['--no-proxy-server']);exercise(origin, browser);browser.close()
-            print('PASS: upload, two-account review, selection, bulk edits, preview, and mobile panels')
+            print('PASS: upload, review, personal Stars, team counts, selection, bulk edits, preview, and mobile panels')
         finally:
             server.terminate();server.wait(timeout=10)

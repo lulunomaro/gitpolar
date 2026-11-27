@@ -19,7 +19,7 @@ import { warehouseApi } from './feishu-warehouse.mjs';
 import { feishuCliApi } from './feishu-cli.mjs';
 import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
 import { firmwareApi } from './firmware.mjs';
-import { albumList, albumView, albumMedia, savePhotoSelection } from './album.mjs';
+import { albumList, albumView, albumMedia, savePhotoSelection, changeAlbumStar, visibleAlbumStars } from './album.mjs';
 import { exportSerpentActivity } from './album-export.mjs';
 import { albumPullApi } from './album-pulls.mjs';
 import { albumRefError } from './album-policy.mjs';
@@ -94,8 +94,9 @@ export async function api(req,res,pathname,params,changed,events) {
   const match=pathname.match(/^\/api\/repos\/([a-z0-9][a-z0-9_-]{0,47})(?:\/(.*))?$/);
   if(match) {
     const proposalRoute = match[2]==='album/pulls' || match[2]?.startsWith('album/pulls/');
+    const starTarget = /^album\/stars\/(activity|photo)\/([a-f0-9]{24})$/.exec(match[2] || '');
     const write = !['GET','HEAD'].includes(req.method);
-    const user = proposalRoute ? account(req,res,write) : requireAuth(req,res,write);
+    const user = (proposalRoute || starTarget) ? account(req,res,write) : requireAuth(req,res,write);
     const repo=repository(match[1]);if(!repo)fail(404,'Repository not found.');
     const expectedRepositoryId=req.headers['x-gitpolar-repository-id'];
     if(expectedRepositoryId!==undefined&&expectedRepositoryId!==repo.id)fail(409,'Repository identity does not match the selected repository. Resolve the document context again.');
@@ -103,7 +104,11 @@ export async function api(req,res,pathname,params,changed,events) {
     const action=match[2]||'',ref=params.get('ref')||'main',path=params.get('path')||'';
     if(!action && req.method==='GET')return json(res,await describe(repo,user.id));
     if(proposalRoute) return albumPullApi(req,res,repo,user,action,params,changed);
-    if(action==='album' && req.method==='GET')return json(res,await albumView(repo,ref,user.role !== 'reader' && !albumRefError(repo,'refs/heads/'+ref,user.id)));
+    if(action==='album/stars' && req.method==='GET')return json(res,await visibleAlbumStars(repo,user.id,ref));
+    if (starTarget && ['PUT','DELETE'].includes(req.method)) {
+      return json(res, await changeAlbumStar(repo,user,ref,starTarget[1],starTarget[2],req.method==='PUT'));
+    }
+    if(action==='album' && req.method==='GET')return json(res,await albumView(repo,ref,user.role !== 'reader' && !albumRefError(repo,'refs/heads/'+ref,user.id),user.id));
     if(action==='album/selection' && req.method==='PUT') {
       const result = await savePhotoSelection(repo,user,ref,await body(req));
       changed(repo.name);
