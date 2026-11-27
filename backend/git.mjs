@@ -4,7 +4,7 @@ import { resolve, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { db, now } from './store.mjs';
+import { db, getUser, now } from './store.mjs';
 import { repoRoot, dataRoot, namespace, dbPath, lfsRoot } from './config.mjs';
 import { fail } from './auth.mjs';
 
@@ -41,12 +41,13 @@ export async function installHook(repo) {
   await writeFile(join(repoPath(repo.name),'hooks','pre-receive'),content,{mode:0o755});
 }
 export async function createRepository(user, values) {
-  const {name,description='',initialize=true,cad=false}=values;
+  const {name,description='',initialize=true,cad=false,kind='files'}=values;
   if(!namePattern.test(name || '')) fail(400,'Invalid repository name.');
+  if(!['files','album'].includes(kind)) fail(400,'Invalid repository kind.');
   if(typeof description!=='string' || description.length>240) fail(400,'Description must not exceed 240 characters.');
   if(db.prepare('SELECT id FROM repos WHERE name=?').get(name)) fail(409,'Repository already exists.');
-  const repo={id:randomUUID(),name,description,creator_id:user.id,created_at:now()};
-  db.prepare('INSERT INTO repos(id,name,description,creator_id,created_at) VALUES(?,?,?,?,?)').run(repo.id,name,description,user.id,repo.created_at);
+  const repo={id:randomUUID(),name,description,creator_id:user.id,created_at:now(),kind};
+  db.prepare('INSERT INTO repos(id,name,description,creator_id,created_at,kind) VALUES(?,?,?,?,?,?)').run(repo.id,name,description,user.id,repo.created_at,kind);
   try {
     await mkdir(resolve(repoRoot,namespace),{recursive:true});
     // Exclusive directory creation protects an existing bare repository from reinitialization.
@@ -124,7 +125,7 @@ export async function describe(repo,userId) {
   const commit=refs.length?await commitInfo(repo,defaultBranch):{author:'',message:'Empty repository',date:repo.created_at,hash:''};
   const prefs=db.prepare('SELECT kind FROM preferences WHERE user_id=? AND repo_id=?').all(userId,repo.id).map(r=>r.kind);
   const b=Object.fromEntries(refs.filter(r=>r.name!=='main').map(r=>[r.name,{oid:r.oid}]));
-  return {...repo,owner:namespace,visibility:'Internal',defaultBranch,empty:!refs.length,branchList:refs,branches:b,commit,updated:commit.date,language:'Files',tone:'blue',files:[],starred:prefs.includes('star'),watched:prefs.includes('watch'),starCount:db.prepare("SELECT count(*) AS n FROM preferences WHERE repo_id=? AND kind='star'").get(repo.id).n};
+  return {...repo,owner:namespace,creator:getUser(repo.creator_id),albumUrl:repo.kind==='album'?'/albums/?repo='+encodeURIComponent(repo.name):null,visibility:'Internal',defaultBranch,empty:!refs.length,branchList:refs,branches:b,commit,updated:commit.date,language:repo.kind==='album'?'Photos':'Files',tone:'blue',files:[],starred:prefs.includes('star'),watched:prefs.includes('watch'),starCount:db.prepare("SELECT count(*) AS n FROM preferences WHERE repo_id=? AND kind='star'").get(repo.id).n};
 }
 export async function tree(repo,ref,path='') {
   filePath(path,true);

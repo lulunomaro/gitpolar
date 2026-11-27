@@ -19,6 +19,8 @@ import { warehouseApi } from './feishu-warehouse.mjs';
 import { feishuCliApi } from './feishu-cli.mjs';
 import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
 import { firmwareApi } from './firmware.mjs';
+import { albumList, albumView, albumMedia, savePhotoSelection } from './album.mjs';
+import { exportSerpentActivity } from './album-export.mjs';
 
 function account(req,res,mutate=false) {
   const auth=authenticate(req);if(!auth)fail(401,'Sign in or use a gitpolar access token.');
@@ -30,6 +32,7 @@ export async function api(req,res,pathname,params,changed,events) {
   if(pathname==='/api/procurement'||pathname.startsWith('/api/procurement/'))return procurementApi(req,res,pathname,params,changed);
   if(pathname==='/api/admin'||pathname.startsWith('/api/admin/'))return adminApi(req,res,pathname,params,changed);
   if(pathname==='/api/firmware' || pathname.startsWith('/api/firmware/'))return firmwareApi(req,res,pathname,params,changed);
+  if(pathname==='/api/albums' && req.method==='GET') { requireAuth(req,res); return json(res,await albumList()); }
   if(pathname==='/api/health')return json(res,{ok:true,service:'gitpolar',storage:'git+sqlite+lfs'});
   if(pathname==='/api/session' && req.method==='GET') {
     const auth=authenticate(req);
@@ -95,6 +98,14 @@ export async function api(req,res,pathname,params,changed,events) {
     res.setHeader('X-Gitpolar-Repository-Id',repo.id);
     const action=match[2]||'',ref=params.get('ref')||'main',path=params.get('path')||'';
     if(!action && req.method==='GET')return json(res,await describe(repo,user.id));
+    if(action==='album' && req.method==='GET')return json(res,await albumView(repo,ref,user.role !== 'reader'));
+    if(action==='album/selection' && req.method==='PUT') {
+      const result = await savePhotoSelection(repo,user,ref,await body(req));
+      changed(repo.name);
+      return json(res,result);
+    }
+    if(action==='album/serpent' && req.method==='GET')return exportSerpentActivity(repo,ref,params.get('activity'),res);
+    if(action==='album/media' && ['GET','HEAD'].includes(req.method))return albumMedia(req,res,repo,params);
     if(action==='context' && req.method==='GET')return json(res,await repositoryContext(repo,user,{...(params.has('ref')?{ref:params.get('ref')}:{}),...(params.has('path')?{path:params.get('path')}:{})}));
     if(!action && req.method==='PATCH') {
       const value=await body(req);if(typeof value.description!=='string'||value.description.length>240)fail(400,'Invalid repository description.');

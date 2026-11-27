@@ -32,6 +32,7 @@ export function ensureColumn(table, column, definition) {
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 ensureColumn('sessions', 'provider', "TEXT NOT NULL DEFAULT 'local'");
+ensureColumn('repos', 'kind', "TEXT NOT NULL DEFAULT 'files'");
 export const now = () => new Date().toISOString();
 export const getUser = id => db.prepare('SELECT id,username,display_name AS name,role FROM users WHERE id=?').get(id);
 export const userCount = () => db.prepare('SELECT count(*) AS n FROM users').get().n;

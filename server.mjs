@@ -31,6 +31,9 @@ const runtimeBuild = await runtimeFingerprint();
 const events=new EventEmitter();events.setMaxListeners(1000);
 const changed=name=>events.emit('repository',name);
 const assets=new Map([
+  ['/albums',['albums/index.html','text/html; charset=utf-8']],['/albums/',['albums/index.html','text/html; charset=utf-8']],
+  ['/albums/vendor/serpent-layout.js',['albums/vendor/serpent-layout.js','text/javascript; charset=utf-8']],
+  ['/albums/app.js',['albums/app.js','text/javascript; charset=utf-8']],['/albums/styles.css',['albums/styles.css','text/css; charset=utf-8']],
   ['/login',['login/index.html','text/html; charset=utf-8']],['/login/',['login/index.html','text/html; charset=utf-8']],
   ['/login/app.js',['login/app.js','text/javascript; charset=utf-8']],['/login/styles.css',['login/styles.css','text/css; charset=utf-8']],
   ['/procurement',['procurement/index.html','text/html; charset=utf-8']],['/procurement/',['procurement/index.html','text/html; charset=utf-8']],

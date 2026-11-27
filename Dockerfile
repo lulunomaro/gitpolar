@@ -1,6 +1,6 @@
 FROM node:24-bookworm-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git git-lfs ca-certificates \
+    && apt-get install -y --no-install-recommends git git-lfs ca-certificates python3 python3-pil \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./
@@ -10,6 +10,8 @@ COPY --chown=node:node backend ./backend
 COPY --chown=node:node admin ./admin
 COPY --chown=node:node procurement ./procurement
 COPY --chown=node:node login ./login
+COPY --chown=node:node albums ./albums
+COPY --chown=node:node scripts ./scripts
 COPY --chown=node:node templates ./templates
 COPY --chown=node:node assets ./assets
 COPY --chown=node:node public ./public

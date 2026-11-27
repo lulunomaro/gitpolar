@@ -442,7 +442,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     return `<button type="button" class="button${small ? ' small' : ''}" data-action="star" data-repo="${escape(repo.name)}" aria-pressed="${active}" aria-label="${active ? 'Unstar' : 'Star'} ${escape(repo.name)}">${icon(active ? 'star-fill' : 'star')}${active ? 'Starred' : 'Star'}</button>`;
   }
   function renderNav(repo, tab, page) {
-    document.querySelector('.drawer-nav').innerHTML = pages.map(([key, label, symbol]) => `<a href="#/${key === 'home' ? '' : key}"${key === page ? ' aria-current="page"' : ''}>${icon(symbol)}${label}</a>`).join('') + (onServer ? `<a href="/procurement/">${icon('repo')}采购与库存</a>${session?.user?.role==='admin'?`<a href="/admin/">${icon('gear')}管理后台</a>`:''}` : '');
+    document.querySelector('.drawer-nav').innerHTML = pages.map(([key, label, symbol]) => `<a href="#/${key === 'home' ? '' : key}"${key === page ? ' aria-current="page"' : ''}>${icon(symbol)}${label}</a>`).join('') + (onServer ? `<a href="/albums/">${icon('book')}活动相册</a><a href="/procurement/">${icon('repo')}采购与库存</a>${session?.user?.role==='admin'?`<a href="/admin/">${icon('gear')}管理后台</a>`:''}` : '');
     const topNav = document.querySelector('#top-nav');
     topNav.hidden = !repo;
     topNav.innerHTML = repo ? Object.entries(tabs).map(([key, [label, symbol]]) => {
@@ -539,7 +539,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       <ul class="list" id="repo-results">${repos.map(repoRow).join('')}</ul></section>`;
   }
   function repoRow(repo) {
-    return `<li class="repo-row"><div class="repo-row-main"><h2><a href="${repoHref(repo.name)}">${escape(repo.name)}</a><span class="label">${escape(repo.visibility || 'Public')}</span></h2><p>${escape(repo.description)}</p><div class="repo-metadata">${language(repo)}<span>${icon('star')}${starred.includes(repo.name) ? 1 : 0}</span><span>Updated ${escape(repo.updated)}</span></div></div>${starButton(repo)}</li>`;
+    return `<li class="repo-row"><div class="repo-row-main"><h2><a href="${repoHref(repo.name)}">${escape(repo.name)}</a><span class="label">${escape(repo.visibility || 'Public')}</span></h2><p>${escape(repo.description)}</p><div class="repo-metadata">${language(repo)}${onServer&&repo.kind==='album'?`<a href="/albums/?repo=${encodeURIComponent(repo.name)}">${icon('book')}打开相册</a><span>拥有者 ${escape(repo.creator?.name||repo.creator?.username||'')}</span>`:''}<span>${icon('star')}${starred.includes(repo.name) ? 1 : 0}</span><span>Updated ${escape(repo.updated)}</span></div></div>${starButton(repo)}</li>`;
   }
   function filterRepos() {
     const needle = document.querySelector('#repo-filter').value.toLowerCase();
@@ -557,6 +557,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       : ['issues', 'pulls'].includes(tab) ? ticketPage(tab, repo.name) : auxiliaryPage(repo, tab);
     return `<header class="repo-heading"><div class="repo-identity">${icon('repo')}<h1><a href="#/repos">${namespaceLabel()}</a><span class="muted"> / </span><a class="repo-heading-name" href="${repoHref(repo.name)}">${name}</a></h1><span class="label">${escape(repo.visibility || 'Public')}</span></div>
       <div class="repo-heading-actions">
+        ${onServer&&repo.kind==='album'?`<a class="button primary" href="/albums/?${escape(new URLSearchParams({repo:repo.name,ref:query.get('branch')||repo.defaultBranch}))}">${icon('book')}可视化相册</a>`:''}
         <button class="button" data-action="pin" data-repo="${name}" aria-pressed="${pinned.includes(repo.name)}">${icon('pin')}${pinned.includes(repo.name) ? 'Pinned' : 'Pin'}</button>
         <button class="button" data-action="watch" data-repo="${name}" aria-pressed="${watch}">${icon('eye')}${watch ? 'Unwatch' : 'Watch'}<span class="count">${watch ? 1 : 0}</span>${icon('chevron-down', 12)}</button>
         <button class="button" data-action="fork" data-repo="${name}">${icon('repo-forked')}Fork<span class="count">0</span>${icon('chevron-down', 12)}</button>
