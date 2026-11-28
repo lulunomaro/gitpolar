@@ -309,6 +309,17 @@ test('dependency-scoped assembly history, reusable preview assets and exact revi
       assert.deepEqual(page.value.commits.slice(0,3).map(c=>[c.oid,c.previewOnly,c.dependencyOnly]),
         [[replaced,true,false],[renewed,true,false],[stale,false,true]]);
     });
+    await t.test('removing one registered part keeps the remaining parts in assembly history', async () => {
+      await git(['rm', '--', partA], work);
+      const removal = await commit('Remove linked part');
+      assert.equal((await preview(removal)).reason, 'stale');
+      await chmod(join(work, partB), 0o666);
+      await writeFile(join(work, partB), randomBytes(2089));
+      const revision = await commit('Change another remaining dependency');
+      const params = new URLSearchParams({ref: revision, path: assembly, scope: 'dependencies'});
+      const {value} = await request(server, '/api/repos/compare-cad/history?' + params, {cookie});
+      assert.deepEqual(value.commits.slice(0, 2).map(c => [c.oid, c.dependencyOnly]), [[revision, true], [removal, true]]);
+    });
     const noAuth=await request(server,'/api/repos/compare-cad/compare?head=main');assert.equal(noAuth.status,401);assert.equal((await request(server,'/api/repos/compare-cad/compare?head=main&path=../escape.SLDPRT',{cookie})).status,400);assert.equal((await request(server,'/api/repos/compare-cad/compare?head=main&path=missing.SLDPRT',{cookie})).status,404);
     t.diagnostic('Changed references appear without rewriting the assembly; unrelated parts reuse previews; instance moves add no mesh; old and new content stays pinned. Browser fixture: '+directory+'; versions '+v1+' / '+v2);
   }finally{await server.stop();}

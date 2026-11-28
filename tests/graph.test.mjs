@@ -49,6 +49,10 @@ test('NAS graph exposes real topology, immutable pagination, annotated tags and 
     const mergeInfo=(await request('/api/repos/graph-fixture/commit?ref='+merged)).value;assert.equal(mergeInfo.parents.length,2);assert(mergeInfo.files.some(f=>f.path===renamed));
     const rootInfo=(await request('/api/repos/graph-fixture/commit?ref='+initial)).value;assert(rootInfo.files.some(f=>f.status==='A'&&f.path===original));
     assert.equal((await request('/api/repos/graph-fixture/graph?cursor=invalid')).status,400);assert.equal((await request('/api/repos/graph-fixture/commit?ref=--all')).status,400);
+    const wrongBranch = await request('/api/repos/graph-fixture/graph?ref=design%2Fplate&cursor='+encodeURIComponent(page.nextCursor));
+    assert.equal(wrongBranch.status,400);
+    const retired = Buffer.from(JSON.stringify({version:1,roots:['f'.repeat(40)],offset:100})).toString('base64url');
+    assert.equal((await request('/api/repos/graph-fixture/graph?cursor='+retired)).status,410);
     const scoped=(await request('/api/repos/graph-fixture/graph?ref=design%2Fplate')).value;assert.equal(scoped.commits[0].oid,design);
     t.diagnostic('Actual bare Git fixture includes a divergent branch, merge, annotated tag, Unicode rename and 105 frozen commits. '+directory);
   }finally{if(child.exitCode===null){const stopped=once(child,'exit');child.kill();await stopped;}}

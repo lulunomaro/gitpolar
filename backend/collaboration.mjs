@@ -16,9 +16,9 @@ import {
   importSarif,
 } from './ci.mjs';
 
-export function globalCollab(req, res, path) {
+export async function globalCollab(req, res, path) {
   const user = requireAuth(req, res);
-  if (path === '/api/pulls' && req.method === 'GET') return json(res, { pulls: listPulls() });
+  if (path === '/api/pulls' && req.method === 'GET') return json(res, { pulls: await listPulls() });
   if (path === '/api/inbox' && req.method === 'GET') {
     const items = db
       .prepare(
@@ -100,7 +100,7 @@ export async function repoCollab(req, res, repo, user, action, params, changed) 
   if (area === 'pulls') {
     if (repo.kind === 'album') fail(409, 'Use the album review workflow.');
     if (!sub && method === 'GET')
-      return send({ pulls: listPulls().filter((p) => p.repo === repo.name) });
+      return send({ pulls: await listPulls(repo) });
     if (!sub && method === 'POST') {
       const pr = await createPull(repo, user, await body(req));
       await pullChecks(repo, pr.number, pr.base, pr.head_oid);

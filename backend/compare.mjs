@@ -61,7 +61,7 @@ export async function dependencyHistory(repo,ref,path,cursor='0'){
     const after=current,before=row.parent?await state(row.parent):null;
     current=before;consumed++;
     if(!after.source&&!before?.source)continue;
-    if(!after.verified)scope='project-fallback';
+    if ((after.source && !after.verified) || (before?.source && !before.verified)) scope='project-fallback';
     const sameSource=after.source===before?.source;
     const dependenciesChanged=after.dependencies!==before?.dependencies;
     if(!sameSource||dependenciesChanged||after.preview!==before?.preview){

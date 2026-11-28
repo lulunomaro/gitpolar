@@ -20,6 +20,14 @@ function objectRecord(repo,oid) {
   if(!row)fail(404,'LFS object not found.');
   return row;
 }
+async function storedObjectAvailable(record, target) {
+  if (!record?.complete) return false;
+  const info = await stat(target).catch(error => {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+    throw error;
+  });
+  return Boolean(info?.isFile() && info.size === record.size);
+}
 export function lockList(repo,params) {
   return db.prepare('SELECT l.*,u.username FROM locks l JOIN users u ON u.id=l.owner_id WHERE l.repo_id=? ORDER BY l.locked_at,l.id').all(repo.id)
     .filter(l=>(!params.path||l.path===params.path)&&(!params.id||l.id===params.id));
@@ -54,7 +62,7 @@ export async function lfs(req,res,repo,suffix,searchParams,changed=()=>{}) {
         record=db.prepare('SELECT * FROM lfs_objects WHERE repo_id=? AND oid=?').get(repo.id,oid);
       }
       if(record && record.size!==size){objects.push({oid,size,error:{code:422,message:'LFS object size does not match its recorded hash.'}});continue;}
-      const exists=record?.complete && (await stat(objectPath(repo,oid)).catch(()=>null))?.size===size;
+      const exists = await storedObjectAvailable(record, objectPath(repo, oid));
       const href=new URL(`/${namespace}/${repo.name}.git/info/lfs/objects/${oid}`,requestOrigin()).href;
       if(upload) {
         objects.push({oid,size,authenticated:true,...(!exists?{actions:{upload:{href,header:{...(req.headers.authorization?{Authorization:req.headers.authorization}:{})}},verify:{href:href+'/verify',header:{...(req.headers.authorization?{Authorization:req.headers.authorization}:{})}}}}:{})});
@@ -69,9 +77,8 @@ export async function lfs(req,res,repo,suffix,searchParams,changed=()=>{}) {
     const [,oid,verify]=objectMatch,record=objectRecord(repo,oid);
     const target=objectPath(repo,oid);
     if(req.method==='GET' && !verify) {
-      if(!record.complete)fail(404,'LFS upload is incomplete.');
-      const info=await stat(target).catch(()=>null);if(!info)fail(404,'LFS object not found.');
-      res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':info.size});
+      if (!await storedObjectAvailable(record, target)) fail(404, 'LFS object is missing or incomplete.');
+      res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':record.size});
       return pipeline(createReadStream(target),res);
     }
     if(req.method==='PUT' && !verify) {
@@ -91,7 +98,7 @@ export async function lfs(req,res,repo,suffix,searchParams,changed=()=>{}) {
     }
     if(req.method==='POST' && verify) {
       const values=await body(req);
-      if(values.oid!==oid||values.size!==record.size||!record.complete)fail(422,'LFS object verification failed.');
+      if(values.oid!==oid||values.size!==record.size||!await storedObjectAvailable(record,target))fail(422,'LFS object verification failed.');
       return reply(res,{});
     }
     fail(405,'Unsupported LFS object method.');

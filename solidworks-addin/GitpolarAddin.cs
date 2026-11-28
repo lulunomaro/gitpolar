@@ -113,7 +113,7 @@ namespace Gitpolar.SolidWorks {
     public string Workspace(){string directory=settings.Workspace;if(String.IsNullOrEmpty(directory)){string file=ActivePath();if(String.IsNullOrEmpty(file))throw new InvalidOperationException("请在连接设置中选择本地 Git 工作副本。");directory=Path.GetDirectoryName(file);}string value=Git.Run(directory,"rev-parse","--show-toplevel").Trim();return Path.GetFullPath(value).TrimEnd(Path.DirectorySeparatorChar);}
     public string Repository(string workspace){if(!String.IsNullOrEmpty(settings.Repository))return settings.Repository;string remote=Git.Try(workspace,"remote","get-url","origin").Trim();Uri uri;string name=Uri.TryCreate(remote,UriKind.Absolute,out uri)?Path.GetFileName(uri.AbsolutePath):Path.GetFileName(remote);if(name.EndsWith(".git",StringComparison.OrdinalIgnoreCase))name=name.Substring(0,name.Length-4);return String.IsNullOrEmpty(name)?new DirectoryInfo(workspace).Name:name;}
     static bool Inside(string file,string directory){return Path.GetFullPath(file).StartsWith(Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);}
-    static string Relative(string file,string workspace){if(!Inside(file,workspace))throw new InvalidOperationException("图纸不属于当前 Git 工作副本。");return Path.GetFullPath(file).Substring(workspace.Length+1).Replace('\\','/');}
+    static string Relative(string file,string workspace){if(!Inside(file,workspace))throw new InvalidOperationException("图纸不属于当前 Git 工作副本。");return Path.GetFullPath(file).Substring(Normal(workspace).Length+1).Replace('\\','/');}
     static string ValueText(IDictionary<string,object> values,string key){object value;return values.TryGetValue(key,out value)&&value!=null?Convert.ToString(value):"";}
     static bool Flag(IDictionary<string,object> values,string key){object value;return values.TryGetValue(key,out value)&&value is bool&&(bool)value;}
     static string[] Strings(IDictionary<string,object> values,string key){object value;if(!values.TryGetValue(key,out value)||!(value is IEnumerable))return new string[0];return ((IEnumerable)value).Cast<object>().Select(Convert.ToString).ToArray();}
@@ -142,6 +142,9 @@ namespace Gitpolar.SolidWorks {
     async Task<object> RepositoryAction(string workspace,string action,Dictionary<string,object> values){
       if(action=="create-branch"&&!values.ContainsKey("start")&&values.ContainsKey("oid"))values["start"]=values["oid"];
       if(action=="checkout"&&!values.ContainsKey("reference")&&values.ContainsKey("name"))values["reference"]="refs/heads/"+ValueText(values,"name");
+      // Check the destination before saving or closing drawings as well as before the Git mutation.
+      if(action=="merge"||action=="merge-manual"||action=="continue-merge")RepositoryGit.RequireBranchRef(workspace);
+      if((action=="continue-merge"||action=="mark-manual-resolved"||action=="resolve-conflict")&&RepositoryGit.Merging(workspace))CadMergeStore.ValidateActive(workspace);
       if(action=="continue-merge"||action=="mark-manual-resolved")await SaveProject(workspace);
       if(action=="abort-merge")SaveAndCloseMergeDocuments(workspace);
       bool changes=RepositoryGit.ChangesWorktree(action,values);
@@ -171,7 +174,7 @@ namespace Gitpolar.SolidWorks {
       for(int i=0;i<tokens.Length;i++){string token=tokens[i];if(token.Length<4)continue;string status=token.Substring(0,2),file=token.Substring(3);var entry=new Dictionary<string,object>{{"path",file},{"status",status.Trim()}};if(status.IndexOf('R')>=0||status.IndexOf('C')>=0){if(i+1<tokens.Length)entry["previousPath"]=tokens[++i];}result.Add(entry);}return result;
     }
     public static object Status(string workspace,string active){
-      string branch=Git.Try(workspace,"symbolic-ref","--quiet","--short","HEAD").Trim();string counts=Git.Try(workspace,"rev-list","--left-right","--count","HEAD...@{upstream}").Trim();string[] pair=counts.Split(new char[]{'\t',' '},StringSplitOptions.RemoveEmptyEntries);int ahead=0,behind=0;if(pair.Length==2){Int32.TryParse(pair[0],out ahead);Int32.TryParse(pair[1],out behind);}
+      string branch=Git.Run(workspace,"branch","--show-current").Trim();string counts=Git.Try(workspace,"rev-list","--left-right","--count","HEAD...@{upstream}").Trim();string[] pair=counts.Split(new char[]{'\t',' '},StringSplitOptions.RemoveEmptyEntries);int ahead=0,behind=0;if(pair.Length==2){Int32.TryParse(pair[0],out ahead);Int32.TryParse(pair[1],out behind);}
       return new {workspace=workspace,activeDocument=String.IsNullOrEmpty(active)?"":Path.GetFileName(active),relativePath=!String.IsNullOrEmpty(active)&&Inside(active,workspace)?Relative(active,workspace):"",branch=branch,files=ChangedFiles(workspace),ahead=ahead,behind=behind};
     }
     public static object Graph(string workspace,string scope,string cursor){
@@ -188,7 +191,11 @@ namespace Gitpolar.SolidWorks {
       string changes=parents.Length>0?Git.Run(workspace,"diff","--name-status","-z","--find-renames",parents[0],oid,"--"):Git.Run(workspace,"diff-tree","--root","--no-commit-id","-r","--name-status","-z","--find-renames",oid,"--");string[] tokens=changes.Split('\0');var files=new List<object>();for(int i=0;i<tokens.Length&&!String.IsNullOrEmpty(tokens[i]);){string status=tokens[i++],previous=tokens[i++],file=status.StartsWith("R")||status.StartsWith("C")?tokens[i++]:previous;files.Add(new {path=file,previousPath=previous,status=status.Substring(0,1),preview=file.StartsWith(".gitpolar/")});}
       return new {oid=oid,hash=oid.Substring(0,7),parents=parents,author=f[2],date=f[3],committer=f[4],committedAt=f[5],message=f[6],files=files};
     }
-    async Task Push(string workspace){string branch=Git.Run(workspace,"symbolic-ref","--quiet","--short","HEAD").Trim();if(String.IsNullOrEmpty(branch))throw new InvalidOperationException("请先切到本地分支，再推送。");Progress("正在 Push 到 NAS（包含 Git LFS）…");await Git.Async(workspace,"push","--set-upstream","origin","HEAD:refs/heads/"+branch);Progress("已推送到 NAS");}
+    async Task Push(string workspace){
+      Progress("正在 Push 到 NAS（包含 Git LFS）…");
+      await RepositoryGit.Push(workspace);
+      Progress("已推送到 NAS");
+    }
     public async Task<string> SaveCheckpoint(){
       if(IsBusy)throw new InvalidOperationException("正在保存或执行 Git 操作，请稍候。");IsBusy=true;try{
         string workspace=Workspace();if(RepositoryGit.Merging(workspace))throw new InvalidOperationException("当前正在合并。请在“人工合图 / 冲突”页应用保存结果，再点击“完成合并”。");string source=ActivePath();if(String.IsNullOrEmpty(source)||!Inside(source,workspace))throw new InvalidOperationException("请先打开此工作副本中的可编辑图纸。历史版本请回到编辑副本后再保存成果。");await SaveProject(workspace);var files=await Task.Run(()=>ChangedFiles(workspace));string[] selected=files.Select(f=>Convert.ToString(f["path"])).Where(f=>!f.StartsWith(".gitpolar/",StringComparison.Ordinal)).ToArray();if(selected.Length==0){Progress("当前成果已保存，没有新的文件改动。");return "";}
@@ -208,7 +215,8 @@ namespace Gitpolar.SolidWorks {
       for(var doc=(IModelDoc2)app.GetFirstDocument();doc!=null;doc=(IModelDoc2)doc.GetNext()){string file=doc.GetPathName();if(!String.IsNullOrEmpty(file)&&Inside(file,workspace)&&doc.GetSaveFlag()){await EnsureEditable(workspace,doc,file);RequireRunning();int errors=0,warnings=0;if(!doc.Save3(1,ref errors,ref warnings)||errors!=0)throw new InvalidOperationException("保存失败："+file+" ("+errors+")");}}
     }
     async Task<object> CommitChanges(string workspace,Dictionary<string,object> values){
-      if(RepositoryGit.Merging(workspace))throw new InvalidOperationException("当前正在合并，请在“人工合图 / 冲突”页保存结果并完成合并。");string message=ValueText(values,"message").Trim();if(String.IsNullOrEmpty(message)||message.Length>500)throw new InvalidOperationException("请输入 1–500 字的提交说明。");
+      if(RepositoryGit.Merging(workspace))throw new InvalidOperationException("当前正在合并，请在“人工合图 / 冲突”页保存结果并完成合并。");
+      string message=ValueText(values,"message").Trim();if(String.IsNullOrEmpty(message)||message.Length>500)throw new InvalidOperationException("请输入 1–500 字的提交说明。");
       var selected=new HashSet<string>(Strings(values,"files"),StringComparer.Ordinal);foreach(string file in selected)SafePath(workspace,file);
       string source=ActivePath();if(!String.IsNullOrEmpty(source)&&!Inside(source,workspace))throw new InvalidOperationException("当前图纸不属于选定工作副本。");
       await SaveProject(workspace);
@@ -233,6 +241,7 @@ namespace Gitpolar.SolidWorks {
         if(status=="??"&&selected.Contains(path))untracked.Add(path);
       }
       selected.IntersectWith(changed);
+      if(RepositoryGit.Conflicts(workspace).Any(selected.Contains))throw new InvalidOperationException("所选文件还有冲突，请先处理并标记解决，再保存提交。");
       if(selected.Count==0)throw new InvalidOperationException("所选文件没有可提交的改动。");
       Progress("正在提交 CAD 与预览…");
       // --only 从工作树取所选内容。仅新文件需要先登记，已暂存的删除和重命名可直接提交。
@@ -245,7 +254,7 @@ namespace Gitpolar.SolidWorks {
     public static bool IsCadFile(string file){return IsNative(file);}
     static bool IsNative(string file){return new string[]{".sldprt",".sldasm",".slddrw",".sldlfp",".slddrt",".prtdot",".asmdot",".drwdot"}.Contains(Path.GetExtension(file).ToLowerInvariant());}
     public static string SafePath(string workspace,string relative){if(String.IsNullOrEmpty(relative)||Path.IsPathRooted(relative)||relative.Split('/','\\').Any(p=>p==".."||p=="."||String.Equals(p,".git",StringComparison.OrdinalIgnoreCase)))throw new InvalidOperationException("仓库文件路径无效。");string file=Path.GetFullPath(Path.Combine(workspace,relative));if(!Inside(file,workspace))throw new InvalidOperationException("路径超出工作副本。");return file;}
-    static bool IsPointer(string file){if(new FileInfo(file).Length>1024)return false;return File.ReadAllText(file).StartsWith("version https://git-lfs.github.com/spec/v1");}
+    internal static bool IsPointer(string file){if(new FileInfo(file).Length>1024)return false;return File.ReadAllText(file).StartsWith("version https://git-lfs.github.com/spec/v1");}
     public async Task<object> OpenSnapshot(string workspace,string requested,string relative){
       string oid=Commit(workspace,requested);SafePath(workspace,relative);if(!IsNative(relative))throw new InvalidOperationException("请选择 SolidWorks 图纸。");
       string key;using(var algorithm=SHA256.Create()){key=BitConverter.ToString(algorithm.ComputeHash(Encoding.UTF8.GetBytes(workspace.ToLowerInvariant()))).Replace("-","").Substring(0,16);}
@@ -295,9 +304,20 @@ namespace Gitpolar.SolidWorks {
         return await Async(directory,command.ToArray()).ConfigureAwait(false);
       }finally{File.Delete(list);}
     }
-    public static async Task<string> ProcessAsync(string executable,string directory,string[] args,bool skipSmudge=false){
-      var start=new ProcessStartInfo(executable,String.Join(" ",args.Select(Quote))){WorkingDirectory=directory,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};start.EnvironmentVariables["GIT_TERMINAL_PROMPT"]="0";start.EnvironmentVariables["GIT_OPTIONAL_LOCKS"]="0";if(skipSmudge)start.EnvironmentVariables["GIT_LFS_SKIP_SMUDGE"]="1";
-      using(var process=new Process(){StartInfo=start,EnableRaisingEvents=true}){var done=new TaskCompletionSource<int>();process.Exited+=(s,e)=>done.TrySetResult(process.ExitCode);process.Start();Task<string> output=process.StandardOutput.ReadToEndAsync(),errors=process.StandardError.ReadToEndAsync();await done.Task.ConfigureAwait(false);string result=await output.ConfigureAwait(false),error=await errors.ConfigureAwait(false);if(process.ExitCode!=0)throw new InvalidOperationException(error.Trim().Length>0?error.Trim():"命令执行失败："+executable);return result;}
+    public static Task<string> ProcessAsync(string executable,string directory,string[] args,bool skipSmudge=false){
+      return ProcessAsync(executable,directory,args,skipSmudge,null);
+    }
+    internal static Task<string> WithInputAsync(string workspace,string input,params string[] args){
+      return ProcessAsync("git.exe",workspace,args,false,input);
+    }
+    static async Task<string> ProcessAsync(string executable,string directory,string[] args,bool skipSmudge,string input){
+      var start=new ProcessStartInfo(executable,String.Join(" ",args.Select(Quote))){WorkingDirectory=directory,UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,RedirectStandardInput=input!=null,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};start.EnvironmentVariables["GIT_TERMINAL_PROMPT"]="0";start.EnvironmentVariables["GIT_OPTIONAL_LOCKS"]="0";if(skipSmudge)start.EnvironmentVariables["GIT_LFS_SKIP_SMUDGE"]="1";
+      using(var process=new Process(){StartInfo=start,EnableRaisingEvents=true}){var done=new TaskCompletionSource<int>();process.Exited+=(s,e)=>done.TrySetResult(process.ExitCode);process.Start();Task<string> output=process.StandardOutput.ReadToEndAsync(),errors=process.StandardError.ReadToEndAsync();
+        if(input!=null){
+          byte[] bytes=Encoding.UTF8.GetBytes(input);
+          using(var stdin=process.StandardInput.BaseStream)await stdin.WriteAsync(bytes,0,bytes.Length).ConfigureAwait(false);
+        }
+        await done.Task.ConfigureAwait(false);string result=await output.ConfigureAwait(false),error=await errors.ConfigureAwait(false);if(process.ExitCode!=0)throw new InvalidOperationException(error.Trim().Length>0?error.Trim():"命令执行失败："+executable);return result;}
     }
   }
 }

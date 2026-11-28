@@ -374,3 +374,75 @@ test(
     }
   },
 );
+
+test('manual resolution keeps the reviewed branch changes and cannot confirm the current target as its own result', async (t) => {
+  const {call, git} = await fixture(t);
+  const api = 'repos/design/';
+  const branch = (name, from) => call('writer', api+'branches', 'POST', {name, from}, 201);
+  const edit = (branch, path, text) => call('writer', api+'file', 'PUT', {branch, path, text});
+  await branch('layout', 'main');
+  await edit('layout', 'README.md', 'source assembly notes');
+  const head = (await edit('layout', 'parts/new-mount.txt', 'new bracket')).oid;
+  const pr = await call('writer', api+'pulls', 'POST', {title:'Join assemblies', base:'main', head:'layout'}, 201);
+  const base = (await edit('main', 'README.md', 'target assembly notes')).oid;
+  const route = api+'pulls/'+pr.number;
+  await branch('result', 'main');
+  const resolve = (name, oid, status) => call('owner', route+'/resolve', 'POST', {baseOid:base, headOid:head, resolutionBranch:name, resolutionOid:oid, body:'Confirmed assembly'}, status);
+  await resolve('main', base, 409);
+  await resolve('result', base, 409);
+  const incomplete = (await edit('result', 'README.md', 'saved integrated assembly')).oid;
+  const missing = await resolve('result', incomplete, 409);
+  assert.ok(missing.error.includes('parts/new-mount.txt'));
+  assert.equal(git('design','rev-parse','main'), base);
+  const complete = (await edit('result', 'parts/new-mount.txt', 'new bracket')).oid;
+  assert.equal((await resolve('result', complete, 200)).state, 'merged');
+  assert.equal(git('design','show','main:parts/new-mount.txt'), 'new bracket');
+});
+
+test('a merge pushed by the SolidWorks client closes its PR at the original integration commit after source cleanup', async (t) => {
+  const {call, git} = await fixture(t);
+  const api = 'repos/design/';
+  await call('writer', api+'branches', 'POST', {name:'assembly-work', from:'main'}, 201);
+  const head = (await call('writer', api+'file', 'PUT', {branch:'assembly-work',path:'part.txt',text:'revised part'})).oid;
+  const base = (await call('owner', api+'file', 'PUT', {branch:'main',path:'drawing.txt',text:'updated drawing'})).oid;
+  const pr = await call('writer', api+'pulls', 'POST', {title:'Integration from CAD',base:'main',head:'assembly-work'}, 201);
+  const tree = git('design','merge-tree','--write-tree',base,head);
+  const joined = git('design','-c','user.name=Designer','-c','user.email=d@test.local','commit-tree',tree,'-p',base,'-p',head,'-m','Hand-merged in SolidWorks');
+  git('design','update-ref','refs/heads/main',joined,base);
+  await call('owner', api+'file', 'PUT', {branch:'main',path:'later.txt',text:'newer independent change'});
+  git('design','update-ref','-d','refs/heads/assembly-work',head);
+  assert.equal((await call('owner','pulls')).pulls.find(p=>p.number===pr.number).state,'merged');
+  const detail = await call('owner', api+'pulls/'+pr.number);
+  assert.deepEqual([detail.merged_oid,detail.base_oid,detail.head_oid],[joined,base,head]);
+  assert.equal((await call('owner',api+'pulls/'+pr.number+'/merge','POST',{baseOid:base,headOid:head})).merged_oid,joined);
+  assert.equal(git('design','show','main:later.txt'),'newer independent change');
+});
+
+test('PR merge waits for the usable LFS bytes when a saved pointer has lost its NAS object', async (t) => {
+  const {call,git,dir,repo,origin} = await fixture(t);
+  const api='repos/design/';
+  await call('writer',api+'branches','POST',{name:'parts',from:'main'},201);
+  const bytes=Buffer.from('test drawing data'),oid=createHash('sha256').update(bytes).digest('hex');
+  const file=join(dir,'lfs',repo.id,oid.slice(0,2),oid.slice(2,4),oid);
+  await mkdir(dirname(file),{recursive:true}); await writeFile(file,bytes);
+  const database=new DatabaseSync(join(dir,'gitpolar.sqlite'));
+  try { database.prepare('INSERT INTO lfs_objects VALUES(?,?,?,1)').run(repo.id,oid,bytes.length); } finally {database.close();}
+  await call('writer',api+'file','PUT',{branch:'parts',path:'saved.ptr',text:`version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize ${bytes.length}\n`});
+  const pr=await call('writer',api+'pulls','POST',{title:'Include drawing',base:'main',head:'parts'},201);
+  const route=api+'pulls/'+pr.number,values={baseOid:pr.base_oid,headOid:pr.head_oid};
+  await rm(file);
+  const response=await call('owner',route+'/merge','POST',values,409);
+  assert.ok(response.error.includes('saved.ptr'));assert.equal(git('design','rev-parse','main'),pr.base_oid);
+  const {token} = await call('owner','tokens','POST',{name:'LFS restore'},201);
+  const headers={Authorization:'Basic '+Buffer.from('owner:'+token).toString('base64')};
+  const objectUrl=origin+'/polar-lab/design.git/info/lfs/objects/'+oid;
+  const verify=() => fetch(objectUrl+'/verify',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({oid,size:bytes.length})});
+  assert.equal((await verify()).status,422);
+  await writeFile(file,bytes.subarray(0,3));
+  assert.equal((await fetch(objectUrl,{headers})).status,404);
+  assert.equal((await verify()).status,422);
+  const upload=await fetch(objectUrl,{method:'PUT',headers,body:bytes});assert.equal(upload.status,200);
+  assert.equal((await verify()).status,200);
+  assert.deepEqual(Buffer.from(await (await fetch(objectUrl,{headers})).arrayBuffer()),bytes);
+  assert.equal((await call('owner',route+'/merge','POST',values)).state,'merged');
+});

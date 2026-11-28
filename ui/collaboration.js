@@ -171,8 +171,11 @@
               : p.state === 'closed' && can
                 ? form('pull-reopen', repo, button('Reopen pull request'), id)
                 : '');
-        if (tab === 'conversation' && can && open && p.branchesPresent)
-          content += `<details class="co-details"><summary>Confirm a manually resolved assembly</summary><p>Save the assembled result in SolidWorks, then commit and push it to a branch in this repository. The selected commit supplies the complete result tree.</p>${form('pull-resolve', repo, field('Resolution branch', select('resolutionBranch', repo.branchList.map((b) => option(b.name, b.name + ' · ' + b.oid.slice(0, 7))).join(''))) + field('Resolution notes', text('body', 'Describe the parts you kept from each branch', true)) + button('Use this saved revision'), id)}</details>`;
+        if (tab === 'conversation' && can && open && p.branchesPresent) {
+          const results = repo.branchList.filter(b => b.name !== p.base && b.oid !== p.base_oid);
+          const choices = option('', 'Choose a saved result branch') + results.map(b => `<option value="${esc(b.name)}" data-oid="${esc(b.oid)}">${esc(b.name)} · ${esc(b.oid.slice(0, 7))}</option>`).join('');
+          content += `<details class="co-details"><summary>Confirm a manually resolved assembly</summary><p>Commit the complete assembly and its parts on a result branch, then select that revision.</p>${form('pull-resolve', repo, field('Resolution branch', select('resolutionBranch', choices, 'required')) + field('Resolution notes', text('body', 'Describe the parts you kept from each branch', true)) + button('Use this saved revision'), id)}</details>`;
+        }
         const tabs = [
           ['conversation', 'Conversation', p.posts.length],
           ['commits', 'Commits', p.commits.length],
@@ -353,7 +356,7 @@
         ...(action === 'resolve'
           ? {
               resolutionBranch: v.resolutionBranch,
-              resolutionOid: r.branchList.find((b) => b.name === v.resolutionBranch)?.oid,
+              resolutionOid: f.elements.resolutionBranch.selectedOptions[0]?.dataset.oid,
             }
           : {}),
         body: v.body || '',

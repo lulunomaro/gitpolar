@@ -3,31 +3,40 @@ import { fail } from './auth.mjs';
 import { git, branches, repoPath, ZERO } from './git.mjs';
 import { copyLfs, rootId } from './forks.mjs';
 import { field, thread, post, nextNumber, transaction, deliver } from './collab-store.mjs';
+import { snapshot as fileSnapshot } from './snapshot.mjs';
+import { externalIntegration, checkResolutionCoverage, isAncestor } from './pull-integration.mjs';
 
 const selectPull = `SELECT p.*,s.name AS source,r.name AS repo,u.username AS author,p.created_at AS createdAt,p.updated_at AS updatedAt FROM code_pulls p JOIN repos s ON s.id=p.source_id JOIN repos r ON r.id=p.repo_id JOIN users u ON u.id=p.author_id`;
 const byNumber = (repo, number) =>
   db.prepare(selectPull + ' WHERE p.repo_id=? AND number=?').get(repo.id, number);
-export const listPulls = () =>
-  db.prepare(selectPull + " WHERE r.status='ready' ORDER BY p.updated_at DESC").all();
+export async function listPulls(repo) {
+  const rows = () => db.prepare(selectPull + " WHERE r.status='ready'" + (repo ? ' AND r.id=?' : '') +
+    ' ORDER BY p.updated_at DESC').all(...(repo ? [repo.id] : []));
+  const pulls = rows(), targets = new Map();
+  for (const pr of pulls.filter(p => p.state === 'open')) {
+    if (!targets.has(pr.repo)) targets.set(pr.repo, await branches({name: pr.repo}));
+    const refs = targets.get(pr.repo);
+    const tip = refs.find(b => b.name === pr.base)?.oid;
+    if (tip && tip !== pr.base_oid) await withPull({id: pr.repo_id}, pr.number,
+      () => snapshot(repository(pr.repo), pr.number));
+  }
+  return rows();
+}
 const refName = (branch) => 'refs/heads/' + branch;
 const guard = new Map();
-export async function withPull(repo, number, fn) {
+async function withPull(repo, number, fn) {
   const key = repo.id + ':' + number;
-  if (guard.has(key)) fail(409, 'Another update is in progress. Refresh this pull request.');
-  guard.set(key, true);
-  try {
-    return await fn();
-  } finally {
-    guard.delete(key);
-  }
+  const running = (guard.get(key) || Promise.resolve()).catch(() => {}).then(fn);
+  guard.set(key, running);
+  try { return await running; }
+  finally { if (guard.get(key) === running) guard.delete(key); }
 }
 async function liveTips(repo, source, base, head) {
   const target = await branches(repo);
   const incoming = repo.id === source.id ? target : await branches(source);
   const baseOid = target.find((b) => b.name === base)?.oid,
     headOid = incoming.find((b) => b.name === head)?.oid;
-  if (!baseOid || !headOid) return null;
-  if (source.id !== repo.id)
+  if (baseOid && headOid && source.id !== repo.id)
     await git(repo.name, [
       'fetch',
       '--no-tags',
@@ -45,7 +54,7 @@ export async function createPull(repo, user, v) {
     text = field(v.body ?? '', 6000, 'description', false);
   if (source.id === repo.id && v.base === v.head) fail(400, 'Select two different branches.');
   const tips = await liveTips(repo, source, v.base, v.head);
-  if (!tips) fail(404, 'The selected branch does not exist.');
+  if (!tips.baseOid || !tips.headOid) fail(404, 'The selected branch does not exist.');
   const { baseOid, headOid } = tips;
   if (!(await git(repo.name, ['merge-base', baseOid, headOid], { allowFailure: true })).trim())
     fail(409, 'Branches have unrelated histories.');
@@ -92,16 +101,22 @@ async function snapshot(repo, number) {
       })
     ).trim();
     if (marker) {
-      const [base, head] = (await git(repo.name, ['show', '-s', '--format=%P', marker]))
-        .trim()
-        .split(' ');
-      db.prepare(
-        "UPDATE code_pulls SET state='merged',merged_oid=?,base_oid=?,head_oid=? WHERE id=?",
-      ).run(marker, base, head, pr.id);
-      return { ...byNumber(repo, number), branchesPresent: true };
+      const [base, head] = (await git(repo.name, ['rev-parse', prefix(number) + 'base', prefix(number) + 'head'])).trim().split('\n');
+      return finishRecorded(repo, pr, marker, base, head);
     }
-    const tips = await liveTips(repo, repository(pr.source), pr.base, pr.head);
-    if (!tips) return { ...pr, branchesPresent: false };
+    const source = repository(pr.source);
+    const tips = await liveTips(repo, source, pr.base, pr.head);
+    const decision = await externalIntegration(repo, pr, tips.baseOid, tips.headOid || pr.head_oid);
+    if (decision) {
+      const r = prefix(number);
+      const verifyHead = source.id === repo.id ? `verify ${refName(pr.head)} ${tips.headOid || ZERO}\n` : '';
+      await git(repo.name, ['update-ref', '--stdin'], {input:
+        `verify ${refName(pr.base)} ${tips.baseOid}\n` + verifyHead +
+        `update ${r}base ${decision.base}\nupdate ${r}head ${decision.head}\ncreate ${r}merged ${decision.merged}\n`
+      }).catch(() => fail(409, 'The branches changed while checking the merge. Refresh the request.'));
+      return finishRecorded(repo, pr, decision.merged, decision.base, decision.head);
+    }
+    if (!tips.baseOid || !tips.headOid) return { ...pr, branchesPresent: false };
     if (tips.baseOid !== pr.base_oid || tips.headOid !== pr.head_oid) {
       await pinTips(repo, number, tips);
       db.prepare("UPDATE code_pulls SET base_oid=?,head_oid=? WHERE id=? AND state='open'").run(
@@ -113,6 +128,11 @@ async function snapshot(repo, number) {
     return { ...pr, base_oid: tips.baseOid, head_oid: tips.headOid, branchesPresent: true };
   }
   return { ...pr, branchesPresent: true };
+}
+function finishRecorded(repo, pr, merged, base, head) {
+  db.prepare("UPDATE code_pulls SET state='merged',merged_oid=?,base_oid=?,head_oid=?,updated_at=? WHERE id=? AND state='open'")
+    .run(merged, base, head, now(), pr.id);
+  return {...byNumber(repo, pr.number), branchesPresent: true};
 }
 async function changeList(repo, pr) {
   const ancestor = (
@@ -147,7 +167,7 @@ function reviewStatus(repo, pr) {
   };
 }
 export async function pullDetail(repo, n, path) {
-  const pr = await snapshot(repo, n),
+  const pr = await withPull(repo, n, () => snapshot(repo, n)),
     { ancestor, files } = await changeList(repo, pr);
   const commits = ancestor
     ? (await git(repo.name, ['log', '--format=%H%x00%an%x00%s', '-100', ancestor + '..' + pr.head_oid]))
@@ -193,6 +213,9 @@ export async function pullDetail(repo, n, path) {
 async function merge(repo, user, pr, values, manual = false) {
   if (!pr.branchesPresent || values.headOid !== pr.head_oid || values.baseOid !== pr.base_oid)
     fail(409, 'The branches changed. Refresh and review the new revision.');
+  if (await isAncestor(repo, pr.head_oid, pr.base_oid)) fail(409, 'The target already contains this revision.');
+  if (!(await git(repo.name, ['merge-base', pr.base_oid, pr.head_oid], {allowFailure: true})).trim())
+    fail(409, 'The branches no longer share history. Refresh the request.');
   const reviews = reviewStatus(repo, pr);
   if (reviews.changes || (reviews.required && !reviews.approved))
     fail(409, 'This revision needs an approving review.');
@@ -202,18 +225,11 @@ async function merge(repo, user, pr, values, manual = false) {
     if (!selected || selected.oid !== values.resolutionOid)
       fail(409, 'The resolution branch changed. Review its saved result again.');
     resolution = selected.oid;
-    const opened = (
-      await git(repo.name, ['rev-parse', '--verify', '--quiet', prefix(pr.number) + 'opened-base'], {
-        allowFailure: true,
-      })
-    ).trim();
-    if (resolution === (opened || pr.base_oid))
-      fail(409, 'Commit the resolved files to the resolution branch first.');
-    if (
-      (await git(repo.name, ['merge-base', '--is-ancestor', pr.base_oid, resolution], { result: true }))
-        .code !== 0
-    )
+    if (selected.name === pr.base || resolution === pr.base_oid)
+      fail(409, 'Choose a separate branch with a saved assembly result.');
+    if (!await isAncestor(repo, pr.base_oid, resolution))
       fail(409, 'Update the resolution branch with the current base before confirming.');
+    await checkResolutionCoverage(repo, pr.base_oid, pr.head_oid, resolution);
     tree = (await git(repo.name, ['rev-parse', resolution + '^{tree}'])).trim();
   } else {
     const merged = await git(repo.name, ['merge-tree', '--write-tree', pr.base_oid, pr.head_oid], {
@@ -227,15 +243,9 @@ async function merge(repo, user, pr, values, manual = false) {
     tree = merged.output.trim().split('\n')[0];
   }
   const source = repository(pr.source);
-  await copyLfs(source, repo);
   const paths = new Set(
     (await git(repo.name, ['diff', '--no-renames', '--name-only', '-z', pr.base_oid, tree])).split('\0'),
   );
-  const locked = db
-    .prepare('SELECT path FROM locks WHERE repo_id=? AND owner_id<>?')
-    .all(repo.id, user.id)
-    .find((l) => paths.has(l.path));
-  if (locked) fail(409, 'File is locked by another teammate: ' + locked.path);
   const env = {
     GIT_AUTHOR_NAME: user.username,
     GIT_COMMITTER_NAME: user.username,
@@ -257,6 +267,9 @@ async function merge(repo, user, pr, values, manual = false) {
       { env, input: `Merge pull request #${pr.number} from ${pr.source}/${pr.head}\n\n${pr.title}\n` },
     )
   ).trim();
+  await copyLfs(source, repo);
+  const missing = (await fileSnapshot(repo, commit)).files.find(file => file.lfs && !file.available);
+  if (missing) fail(409, `LFS content is missing for ${missing.path}. Upload the drawing and retry.`);
   if (source.id !== repo.id && (await liveTips(repo, source, pr.base, pr.head))?.headOid !== pr.head_oid)
     fail(409, 'The source branch changed.');
   const verify = source.id === repo.id ? `verify ${refName(pr.head)} ${pr.head_oid}\n` : '';
@@ -267,6 +280,11 @@ async function merge(repo, user, pr, values, manual = false) {
       ? `verify ${refName(values.resolutionBranch)} ${resolution}\n`
       : '';
   const input = `${verify}${guardResolution}update ${refName(pr.base)} ${commit} ${pr.base_oid}\ncreate ${prefix(pr.number)}merged ${commit}\n`;
+  const locked = db
+    .prepare('SELECT path FROM locks WHERE repo_id=? AND owner_id<>?')
+    .all(repo.id, user.id)
+    .find((l) => paths.has(l.path));
+  if (locked) fail(409, 'File is locked by another teammate: ' + locked.path);
   await git(repo.name, ['update-ref', '--stdin'], { input }).catch(() =>
     fail(409, 'The branch changed while merging. Refresh and retry.'),
   );
@@ -275,6 +293,7 @@ async function merge(repo, user, pr, values, manual = false) {
 export async function actOnPull(repo, user, n, action, v) {
   return withPull(repo, n, async () => {
     const pr = await snapshot(repo, n);
+    if (['merge', 'resolve'].includes(action) && pr.state === 'merged') return pr;
     const text = field(v.body ?? '', 6000, 'comment', action === 'resolve');
     let path = null,
       line = null;
@@ -289,7 +308,6 @@ export async function actOnPull(repo, user, n, action, v) {
       )
         fail(409, 'Refresh and select a changed file.');
     }
-    if (['merge', 'resolve'].includes(action) && pr.state === 'merged') return pr;
     if (action === 'reopen') {
       if (pr.state !== 'closed' || (user.id !== pr.author_id && user.role === 'reader'))
         fail(409, 'This request cannot be reopened.');
