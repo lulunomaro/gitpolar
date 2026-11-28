@@ -36,7 +36,13 @@ Docker 镜像已安装固定版本 @larksuite/cli@1.0.100，CLI 配置持久化�
 
 在战队的飞书开放平台创建或选用专供 `gitpolar` 登录的自建应用，在「安全设置」中登记 `APP_ORIGIN/auth/feishu/callback`。将应用发布给要登录的队员。gitpolar 用授权码交换用户令牌并读取本人基本身份，登录流程只使用本次令牌。
 
-Ubuntu NAS 可运行 `sudo python3 /opt/gitpolar/current/deploy/ubuntu/configure-feishu-login.py`，按提示输入网站应用的 App ID 和 App Secret。脚本向飞书校验凭证，再启用网页登录并检查实际授权跳转。`--check` 可查看需要登记的回调地址。
+Ubuntu NAS 支持扫码创建专用应用。首次在部署目录 `deploy/ubuntu/feishu-registration` 下运行 `npm ci --omit=dev --ignore-scripts`。管理员运行以下命令，然后用战队身份在飞书确认创建 `gitpolar`。NAS 会接收应用凭证，并暂存在只有 root 可读的文件中。
+
+```sh
+sudo python3 /opt/gitpolar/current/deploy/ubuntu/configure-feishu-login.py --register
+```
+
+把命令显示的回调地址登记到新应用的「安全设置」，将应用发布给战队成员，然后运行 `sudo python3 /opt/gitpolar/current/deploy/ubuntu/configure-feishu-login.py --activate-registered`。NAS 会校验凭证、重启服务并检查授权跳转。`--check` 可查看回调地址和当前登录方式。已有专用应用也可直接运行脚本，在 SSH 中按提示输入 App ID 和 App Secret。
 
 把该应用的 `FEISHU_LOGIN_APP_ID` 和 `FEISHU_LOGIN_APP_SECRET` 配置在 NAS 私有环境文件中，重启服务。二者填写完整后，登录按钮会进入飞书官方授权页面。配置其中任一项即选定网页登录，填写不完整时，登录页会提示管理员补全。库存同步单独使用 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。
 

@@ -1,0 +1,7 @@
+{
+  "name": "gitpolar-feishu-registration",
+  "private": true,
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.77.0"
+  }
+}
