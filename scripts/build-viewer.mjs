@@ -1,7 +1,8 @@
 import { build } from 'esbuild';
 import { mkdir,copyFile } from 'node:fs/promises';
 await mkdir('public/cad-vendor',{recursive:true});
-await build({entryPoints:['viewer/viewer.js'],outfile:'public/viewer.js',bundle:true,minify:true,format:'iife',platform:'browser',target:'es2022',legalComments:'eof'});
+await build({entryPoints:['viewer/viewer.js'],outfile:'public/viewer.js',external:['./cad-engine.js'],bundle:true,minify:true,format:'iife',platform:'browser',target:'es2022',legalComments:'eof'});
+await build({entryPoints:['viewer/cad-engine.js'],outfile:'public/cad-engine.js',bundle:true,minify:true,format:'esm',platform:'browser',target:'es2022',legalComments:'eof'});
 await build({entryPoints:['procurement/viewer.js'],outfile:'public/procurement-viewer.js',bundle:true,minify:true,format:'iife',platform:'browser',target:'es2022',legalComments:'eof'});
 await build({entryPoints:['viewer/worker.js'],outfile:'public/cad-worker.js',bundle:true,minify:true,format:'iife',platform:'browser',target:'es2022',legalComments:'eof'});
 for(const name of ['occt-import-js.js','occt-import-js.wasm'])await copyFile('node_modules/occt-import-js/dist/'+name,'public/cad-vendor/'+name);

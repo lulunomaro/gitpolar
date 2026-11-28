@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
+import { serveStatic } from './backend/static-assets.mjs';
 import { loadEnvFile } from 'node:process';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
@@ -51,6 +52,7 @@ const assets=new Map([
   ['/admin/index.html',['admin/index.html','text/html; charset=utf-8']],
   ['/admin/admin.js',['admin/admin.js','text/javascript; charset=utf-8']],['/admin/admin.css',['admin/admin.css','text/css; charset=utf-8']],
   ['/', ['index.html','text/html; charset=utf-8']],['/index.html',['index.html','text/html; charset=utf-8']],
+  ['/cad-engine.js',['public/cad-engine.js','text/javascript; charset=utf-8']],
   ['/viewer.js',['public/viewer.js','text/javascript; charset=utf-8']],['/cad-worker.js',['public/cad-worker.js','text/javascript; charset=utf-8']],
   ['/cad-vendor/occt-import-js.js',['public/cad-vendor/occt-import-js.js','text/javascript; charset=utf-8']],['/cad-vendor/occt-import-js.wasm',['public/cad-vendor/occt-import-js.wasm','application/wasm']],
   ['/cad-vendor/LICENSE.occt-import-js.txt',['public/cad-vendor/LICENSE.occt-import-js.txt','text/plain; charset=utf-8']],['/LICENSE.three.txt',['public/LICENSE.three.txt','text/plain; charset=utf-8']],
@@ -93,10 +95,10 @@ async function handle(req,res) {
       if(tips) branches(repo).then(refs=>Promise.all(refs.filter(b=>tips.get(b.name)!==b.oid).map(b=>autoRun(repo,b.name,b.oid)))).catch(e=>console.error('CI dispatch:',e.message));
     });
   }
-  if(req.method!=='GET')throw new HttpError(405,'Method not allowed.');
+  if(req.method!=='GET'&&req.method!=='HEAD')throw new HttpError(405,'Method not allowed.');
   const asset=assets.get(path);if(!asset)throw new HttpError(404,'Not found.');
   if(path.startsWith('/tools/')&&path.endsWith('.ps1'))res.setHeader('Content-Disposition','attachment; filename='+path.split('/').at(-1));
-  const bytes=await readFile(new URL(asset[0],import.meta.url));res.writeHead(200,{'Content-Type':asset[1],'Content-Length':bytes.length}).end(bytes);
+  return serveStatic(req,res,asset);
 }
 const version=(await git(null,['--version'])).trim();
 for(const repo of db.prepare("SELECT * FROM repos WHERE status='ready'").all())await installHook(repo);

@@ -1,5 +1,6 @@
 # Generated Three.js bundle contains upstream GLSL shader whitespace.
 public/procurement-viewer.js -whitespace linguist-generated=true
+public/cad-engine.js -whitespace linguist-generated=true
 
 *.sh text eol=lf
 *.service text eol=lf

@@ -1,7 +1,9 @@
 import './graph-page.js';
 import './compare-page.js';
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+let THREE;
+function loadEngine() {
+  return THREE || import('./cad-engine.js').then(engine => (THREE = engine));
+}
 (function(){
   const states=new Set(),assets=new Map();
   function release(state){for(const task of state.requests||[]){task.users.delete(state);if(!task.users.size&&!task.done){task.abort.abort();task.worker?.terminate();task.reject?.(new DOMException('Cancelled','AbortError'));assets.delete(task.key);}}state.requests?.clear();}
@@ -32,7 +34,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         if(load.disabled||container.dataset.state==='ready')return;const loadId=++state.loadId;
         load.disabled=true;cancel.hidden=false;state.modelAbort=new AbortController();container.dataset.state='loading';status.textContent='Loading '+meta.format.toUpperCase()+' model…';
         try {
-          const geometry=await loadModel(state,meta);if(!states.has(state)||state.modelAbort.signal.aborted||loadId!==state.loadId)return;
+          const [geometry]=await Promise.all([loadModel(state,meta),loadEngine()]);if(!states.has(state)||state.modelAbort.signal.aborted||loadId!==state.loadId)return;
           createScene(state,geometry);container.querySelector('.viewer-workspace').hidden=false;container.querySelector('.viewer-toolbar').hidden=false;container.querySelector('.viewer-help').hidden=false;load.hidden=true;cancel.hidden=true;
           state.resize();state.fit();container.dataset.state='ready';container.dataset.meshes=String(geometry.meshes.length);
           container.dispatchEvent(new CustomEvent('preview-ready',{detail:state}));
@@ -47,7 +49,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     const container=state.container,stage=container.querySelector('.viewer-stage'),scene=new THREE.Scene(),renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});state.scene=scene;state.renderer=renderer;
     renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setClearColor(document.documentElement.dataset.theme==='dark'?0x161b22:0xf6f8fa);stage.appendChild(renderer.domElement);renderer.domElement.tabIndex=0;
     state.upAxis=state.meta.derived&&/\.sld(?:asm|prt)$/i.test(state.meta.sourcePath)?'y':'z';
-    const camera=new THREE.PerspectiveCamera(40,1,0.1,1000000),controls=new OrbitControls(camera,renderer.domElement);camera.up.set(0,0,1);controls.enableDamping=true;state.controls=controls;state.camera=camera;
+    const camera=new THREE.PerspectiveCamera(40,1,0.1,1000000),controls=new THREE.OrbitControls(camera,renderer.domElement);camera.up.set(0,0,1);controls.enableDamping=true;state.controls=controls;state.camera=camera;
     scene.add(new THREE.AmbientLight(0xffffff,1.6));const light=new THREE.DirectionalLight(0xffffff,2.4);light.position.set(1,-2,4);scene.add(light);const fill=new THREE.DirectionalLight(0xffffff,1.1);fill.position.set(-3,2,1);scene.add(fill);
     const names=new Map();
     function collectNames(node,parents=[]){const path=[...parents,...(node.name?[node.name]:[])];for(const index of node.meshes||[])names.set(index,path.join(' / '));for(const child of node.children||[])collectNames(child,path);}

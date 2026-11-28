@@ -53,7 +53,7 @@
       authenticated = response.ok;
       if (response.ok && current === revision) {
         const next = await response.json();
-        if (current === revision) {
+        if (current === revision && (next.preset !== value.preset || next.colorMode !== value.colorMode)) {
           value = next;
           apply();
         }

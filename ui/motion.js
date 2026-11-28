@@ -14,10 +14,10 @@ const strips = [
 const stripSelector = strips.map(([selector]) => selector).join(',');
 const activeSelector = '[aria-current="page"], [aria-selected="true"]';
 const pressSelector = 'button, a.button, a.btn, a.secondary, a.card, summary.button, .gp-menu > summary';
-const pressProperties = ['--gp-scale-x', '--gp-scale-y', '--gp-drag-x', '--gp-drag-y', '--gp-light-x', '--gp-light-y'];
+const pressProperties = ['--gp-scale-x', '--gp-scale-y', '--gp-drag-x', '--gp-drag-y'];
 
 function installPress(signal) {
-  let held = null;
+  let held = null, moveFrame = 0;
   const releases = new Map();
   const on = (type, listener) => window.addEventListener(type, listener, {capture: true, passive: true, signal});
 
@@ -34,14 +34,15 @@ function installPress(signal) {
     if (!held) return;
     const state = held;
     held = null;
+    cancelAnimationFrame(moveFrame);
+    moveFrame = 0;
     if (immediate || !state.element.isConnected) return clear(state);
     state.element.dataset.gpPress = 'return';
-    releases.set(state, setTimeout(() => clear(state), 320));
+    releases.set(state, setTimeout(() => clear(state), 240));
   }
-  function position({element, rect, startX, startY}, x, y) {
-    const percent = (value) => `${Math.max(0, Math.min(100, value * 100))}%`;
-    element.style.setProperty('--gp-light-x', percent((x - rect.left) / rect.width));
-    element.style.setProperty('--gp-light-y', percent((y - rect.top) / rect.height));
+  function position({element, light, rect, startX, startY}, x, y) {
+    light.style.setProperty('--gp-light-x', `${Math.max(0, Math.min(rect.width, x - rect.left))}px`);
+    light.style.setProperty('--gp-light-y', `${Math.max(0, Math.min(rect.height, y - rect.top))}px`);
     element.style.setProperty('--gp-drag-x', `${2 * Math.tanh((x - startX) / 16)}px`);
     element.style.setProperty('--gp-drag-y', `${1.5 * Math.tanh((y - startY) / 16)}px`);
   }
@@ -56,6 +57,7 @@ function installPress(signal) {
     const startY = keyboard ? rect.top + rect.height / 2 : event.clientY;
     const light = document.createElement('span');
     light.className = 'gp-press-light';
+    light.style.setProperty('--gp-light-size', `${Math.max(48, Math.min(240, Math.max(rect.width, rect.height) * 1.7))}px`);
     light.setAttribute('aria-hidden', 'true');
     held = {element, rect, light, startX, startY, pointerId: keyboard ? null : event.pointerId};
     if (getComputedStyle(element).position === 'static') element.dataset.gpRelative = '';
@@ -65,21 +67,27 @@ function installPress(signal) {
     element.dataset.gpPress = 'held';
     element.append(light);
   }
-  on('pointerdown', event => { if (event.isPrimary && event.button === 0) begin(event); });
   on('pointermove', event => {
     if (held?.pointerId !== event.pointerId) return;
     if (event.pointerType === 'touch' && Math.hypot(event.clientX - held.startX, event.clientY - held.startY) > 8) release(true);
-    else position(held, event.clientX, event.clientY);
+    else {
+      held.x = event.clientX;
+      held.y = event.clientY;
+      if (!moveFrame) moveFrame = requestAnimationFrame(() => {
+        moveFrame = 0;
+        if (held) position(held, held.x, held.y);
+      });
+    }
   });
   on('pointerup', event => { if (held?.pointerId === event.pointerId) release(); });
   on('pointercancel', event => { if (held?.pointerId === event.pointerId) release(true); });
-  on('keydown', event => { if (!event.repeat && ['Enter', ' '].includes(event.key)) begin(event, true); });
   on('keyup', event => { if (held?.pointerId === null && ['Enter', ' '].includes(event.key)) release(); });
   on('blur', event => { if (event.target === window || event.target === held?.element) release(true); });
   signal.addEventListener('abort', () => {
     release(true);
     for (const state of releases.keys()) clear(state);
   });
+  return begin;
 }
 
 function markerGeometry(item, kind) {
@@ -132,14 +140,20 @@ function installNavigation(signal) {
     mount(line, strip, item, kind, end);
     const vertical = kind === 'before';
     const dx = start.x - end.x, dy = start.y - end.y;
-    const stretch = 1 + Math.min(16, Math.abs(vertical ? dy : dx) * .14) / (vertical ? end.height : end.width);
-    const transform = (x, y, sx, sy) => `translate(${x}px, ${y}px) scale(${sx}, ${sy})`;
-    const animation = line.animate([
-      {transform: transform(dx, dy, start.width / end.width, start.height / end.height), easing: 'cubic-bezier(.2,.62,.35,1)'},
-      {offset: .53, transform: transform(dx * .12, dy * .12, vertical ? 1 : stretch, vertical ? stretch : 1), easing: 'ease-out'},
-      {offset: .83, transform: transform(-dx * .012, -dy * .012, 1, 1)},
-      {transform: 'none'},
-    ], {duration: 260});
+    const distance = Math.abs(vertical ? dy : dx);
+    const reach = Math.min(14, distance * .12);
+    // The leading edge stretches into the movement and relaxes as the tab arrives.
+    const frames = Array.from({length: 11}, (_, index) => {
+      const t = index / 10;
+      const remaining = (1 - t) ** 3;
+      const stretch = reach * 9.48 * t * remaining;
+      const x = dx * remaining - (!vertical && dx > 0 ? stretch : 0);
+      const y = dy * remaining - (vertical && dy > 0 ? stretch : 0);
+      const sx = 1 + ((start.width - end.width) * remaining + (vertical ? 0 : stretch)) / end.width;
+      const sy = 1 + ((start.height - end.height) * remaining + (vertical ? stretch : 0)) / end.height;
+      return {transform: `translate(${x}px, ${y}px) scale(${sx}, ${sy})`};
+    });
+    const animation = line.animate(frames, {duration: 155 + Math.min(85, distance * .23)});
     flight = {selector, strip, item, line, animation, lastRect: start};
     animation.onfinish = () => { if (flight?.animation === animation) stop(); };
   }
@@ -203,7 +217,7 @@ function installNavigation(signal) {
     const target = document.querySelector('#view, #page, #heading');
     if (target) {
       arrival?.cancel();
-      arrival = target.animate([{opacity: .82, translate: '0 3px'}, {opacity: 1, translate: '0 0'}], {duration: 145, easing: 'ease-out'});
+      arrival = target.animate([{opacity: .9, transform: 'translateY(2px)'}, {opacity: 1, transform: 'none'}], {duration: 115, easing: 'ease-out'});
     }
   }, {capture: true, signal});
   addEventListener('resize', stop, {passive: true, signal});
@@ -211,15 +225,26 @@ function installNavigation(signal) {
   sync();
 }
 
-let controller;
+let controller, beginPress;
 function applyPreference() {
   const enabled = document.documentElement.dataset.preset === 'github' && !reducedMotion.matches;
   if (enabled === Boolean(controller)) return;
-  if (!enabled) { controller.abort(); controller = null; return; }
+  if (!enabled) { controller.abort(); controller = null; beginPress = null; return; }
   controller = new AbortController();
-  installPress(controller.signal);
+  beginPress = installPress(controller.signal);
   if (typeof Element.prototype.animate === 'function') installNavigation(controller.signal);
 }
+// The OS can change its preference between frames, before the media query's change event.
+function startPress(event, keyboard = false) {
+  applyPreference();
+  beginPress?.(event, keyboard);
+}
+addEventListener('pointerdown', event => {
+  if (event.isPrimary && event.button === 0) startPress(event);
+}, {capture: true, passive: true});
+addEventListener('keydown', event => {
+  if (!event.repeat && (event.key === 'Enter' || event.key === ' ')) startPress(event, true);
+}, {capture: true, passive: true});
 reducedMotion.addEventListener('change', applyPreference);
 addEventListener('gitpolar:appearance', applyPreference);
 applyPreference();

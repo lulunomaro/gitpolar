@@ -10,14 +10,14 @@
   :root[data-preset='github'] [data-gp-press] {
     scale: 1;
     translate: 0 0;
-    transition: translate 290ms var(--gp-settle), scale 300ms var(--gp-settle);
+    transition: translate 205ms var(--gp-settle), scale 220ms var(--gp-settle);
   }
   /* Both attributes are set only for statically positioned hosts. */
   :root[data-preset='github'] :is([data-gp-relative], [data-gp-track]) { position: relative !important; }
   :root[data-preset='github'] [data-gp-press='held'] {
     scale: var(--gp-scale-x) var(--gp-scale-y);
     translate: var(--gp-drag-x, 0px) var(--gp-drag-y, 0px);
-    transition-duration: 85ms, 110ms;
+    transition-duration: 65ms, 85ms;
     transition-timing-function: ease-out;
   }
   :root[data-preset='github'] .gp-press-light {
@@ -26,10 +26,23 @@
     z-index: 1;
     pointer-events: none;
     border-radius: inherit;
-    background: radial-gradient(circle at var(--gp-light-x) var(--gp-light-y), var(--gp-glint), transparent 72%);
+    overflow: hidden;
+    contain: paint;
     opacity: 0;
-    transition: opacity 180ms ease-out;
   }
+  :root[data-preset='github'] .gp-press-light::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: var(--gp-light-size);
+    height: var(--gp-light-size);
+    background: radial-gradient(closest-side, var(--gp-glint), transparent);
+    transform: translate3d(calc(var(--gp-light-x) - 50%), calc(var(--gp-light-y) - 50%), 0);
+  }
+  :root[data-preset='github'] [data-gp-press='return'] > .gp-press-light {
+    animation: gp-release-glow 150ms ease-out both;
+  }
+  @keyframes gp-release-glow { from { opacity: .8; } to { opacity: 0; } }
   :root[data-preset='github'] [data-gp-press='held'] > .gp-press-light { opacity: 1; }
   :root[data-preset='github'] :is(.primary, #login) > .gp-press-light { --gp-glint: rgb(255 255 255 / .28); }
 

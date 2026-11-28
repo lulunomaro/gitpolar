@@ -1,5 +1,5 @@
 """Exercise the real preset, profile, repository and business navigation in Chromium."""
-import io,os,socket,subprocess,sys,time,json
+import base64,io,os,socket,subprocess,sys,time,json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.request import build_opener,ProxyHandler
@@ -48,6 +48,52 @@ def repository_motion(page):
     page.keyboard.up('Space'); expect(page.locator('#navigation[open]')).to_be_visible()
     page.keyboard.press('Escape'); expect(menu).to_be_focused()
     nav.get_by_text('Code', exact=True).click(); expect(page.locator('.file-list')).to_be_visible()
+
+
+def lazy_cad_preview(origin, owner):
+    # CAD files are committed through native Git. Use a disposable account token on this fixture server.
+    result = owner.request.post(origin + '/api/tokens', headers={'Origin': origin}, data={'name': 'CAD browser test'})
+    assert result.ok, result.text()
+    basic = base64.b64encode(('polar:' + result.json()['token']).encode()).decode()
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_CONFIG_COUNT='1',
+               GIT_CONFIG_KEY_0='http.extraHeader', GIT_CONFIG_VALUE_0='Authorization: Basic ' + basic)
+    stl = '\n'.join(['solid sample', 'facet normal 0 0 1', 'outer loop', 'vertex 0 0 0',
+                     'vertex 20 0 0', 'vertex 0 20 0', 'endloop', 'endfacet', 'endsolid sample'])
+    with TemporaryDirectory(prefix='gitpolar-cad-ui-') as work:
+        def git(*args):
+            subprocess.run(['git', '-c', 'http.proxy=', '-c', 'credential.helper=', *args],
+                           cwd=work, env=env, check=True, capture_output=True)
+        git('clone', '--quiet', origin + '/polar-lab/robot-mechanical.git', '.')
+        (Path(work) / 'sample.stl').write_bytes(stl.encode())
+        git('add', '--', 'sample.stl')
+        git('-c', 'user.name=Polar', '-c', 'user.email=polar@gitpolar.local', 'commit', '-qm', 'Add STL preview fixture')
+        git('push', '--quiet', 'origin', 'HEAD:main')
+    page = owner.new_page()
+    requests = []
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.on('request', lambda request: requests.append(request.url))
+    try:
+        page.goto(origin + '/#/')
+        expect(page.locator('.gh-home-feed')).to_be_visible()
+        page.goto(origin + '/#/repos/robot-mechanical?path=README.md')
+        expect(page.locator('.code-body')).to_be_visible()
+        page.goto(origin + '/#/repos/robot-mechanical/graph')
+        expect(page.locator('.git-graph-page')).to_be_visible()
+        page.goto(origin + '/#/repos/robot-mechanical')
+        page.locator('.file-list').get_by_role('link', name='sample.stl').click()
+        viewer = page.locator('[data-cad-viewer]')
+        load = viewer.get_by_role('button', name='Load 3D preview')
+        expect(load).to_be_visible()
+        assert origin + '/cad-engine.js' not in requests and origin + '/cad-worker.js' not in requests
+        load.click()
+        expect(viewer).to_have_attribute('data-state', 'ready', timeout=20000)
+        expect(viewer).to_have_attribute('data-meshes', '1')
+        expect(viewer.locator('canvas')).to_be_visible()
+        assert requests.count(origin + '/cad-engine.js') == 1 and origin + '/cad-worker.js' in requests
+        assert not errors, errors
+    finally:
+        page.close()
 
 
 def collaboration_ui(origin,browser,owner,errors):
@@ -159,11 +205,12 @@ def run(origin,browser,data_dir):
             if key=='repo':
                 page.locator('.tree-visibility').click();expect(page.locator('.repo-tree')).to_be_visible();page.locator('.tree-visibility').click();expect(page.locator('.repo-tree')).not_to_be_visible()
         page.get_by_role('button',name='Open navigation menu',exact=True).click();expect(page.locator('#gp-navigation[open]')).to_be_visible();page.keyboard.press('Escape')
+    lazy_cad_preview(origin, ctx)
     collaboration_ui(origin,browser,ctx,errors)
     assert not errors,errors
     ctx.close()
     guest=browser.new_context(viewport={'width':1440,'height':960});p=guest.new_page();p.goto(origin+'/login/');expect(p.locator('.login-card')).to_be_visible();assert p.locator('.login-page').evaluate('(e)=>getComputedStyle(e,"::after").backgroundImage')=='none';p.screenshot(path=str(ART/'github-login-desktop.png'),full_page=True);p.set_viewport_size({'width':390,'height':844});assert p.evaluate('document.documentElement.scrollWidth<=innerWidth');p.screenshot(path=str(ART/'github-login.png'),full_page=True);guest.close()
-    print(json.dumps({'browserPullReviewAndMerge':True,'dashboard':True,'profileSaved':True,'realContributions':True,'savedPresetRestored':True,'darkTheme':True,'repositoryAndGraph':True,'businessPages':True,'followingFeed':True,'tagAndBranchKeyboard':True,'yearSelection':True,'authorSearchAndDensity':True,'globalIssueRepositorySelection':True,'businessAccountDrawer':True,'mobileWidths':[320,390],'mobileOverflow':False,'browserErrors':errors}))
+    print(json.dumps({'lazyCADRendered':True,'browserPullReviewAndMerge':True,'dashboard':True,'profileSaved':True,'realContributions':True,'savedPresetRestored':True,'darkTheme':True,'repositoryAndGraph':True,'businessPages':True,'followingFeed':True,'tagAndBranchKeyboard':True,'yearSelection':True,'authorSearchAndDensity':True,'globalIssueRepositorySelection':True,'businessAccountDrawer':True,'mobileWidths':[320,390],'mobileOverflow':False,'browserErrors':errors}))
 
 if __name__=='__main__':
  with TemporaryDirectory(prefix='gitpolar-github-ui-') as temp,socket.socket() as s:

@@ -7,6 +7,43 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const root=new URL('../',import.meta.url);
+async function checkAssetRevalidation(origin, owner) {
+  const url = origin + '/cad-engine.js';
+  const get = (method, headers) => fetch(url, {method, headers});
+  const plain = await get('GET', {'Accept-Encoding': 'identity'});
+  assert.equal(plain.status, 200);
+  const source = await readFile(new URL('public/cad-engine.js', root));
+  assert.deepEqual(Buffer.from(await plain.arrayBuffer()), source);
+  const tag = plain.headers.get('etag');
+  assert.ok(tag);
+  assert.equal(plain.headers.get('vary'), 'Accept-Encoding');
+  assert.equal(plain.headers.get('cache-control'), 'public, no-cache');
+  const zipped = await get('GET', {'Accept-Encoding': 'gzip'});
+  assert.equal(zipped.headers.get('content-encoding'), 'gzip');
+  assert.equal(zipped.headers.get('etag'), tag);
+  assert.ok(Number(zipped.headers.get('content-length')) < source.length);
+  assert.deepEqual(Buffer.from(await zipped.arrayBuffer()), source);
+  const head = await get('HEAD', {'Accept-Encoding': 'gzip'});
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('content-length'), zipped.headers.get('content-length'));
+  assert.equal((await head.arrayBuffer()).byteLength, 0);
+  const unchanged = await get('GET', {'If-None-Match': '"other", ' + tag, 'Accept-Encoding': 'gzip'});
+  assert.equal(unchanged.status, 304);
+  assert.equal(unchanged.headers.get('etag'), tag);
+  assert.equal(unchanged.headers.get('vary'), 'Accept-Encoding');
+  assert.equal((await unchanged.arrayBuffer()).byteLength, 0);
+  const uncompressed = await get('HEAD', {'Accept-Encoding': '*;q=1, gzip;q=0'});
+  assert.equal(uncompressed.headers.get('content-encoding'), null);
+  assert.equal(Number(uncompressed.headers.get('content-length')), source.length);
+  for (const [cookie, status] of [[owner, 200], ['', 401]]) {
+    const response = await fetch(origin + '/api/me/appearance', {headers: {cookie, 'If-None-Match': '*'}});
+    assert.equal(response.status, status);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('etag'), null);
+    await response.arrayBuffer();
+  }
+}
+
 test('GitHub preset settings, profile edits, real contributions and follows persist per account', {timeout:45000}, async t=>{
  const dir=await mkdtemp(join(tmpdir(),'gitpolar-interface-'));
  const child=fork(new URL('./procurement-fixture.mjs',import.meta.url),[],{env:{...process.env,DATA_DIR:dir,APP_ORIGIN_ALIASES:'',FEISHU_APP_ID:'',FEISHU_APP_SECRET:'',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:''},windowsHide:true,stdio:['ignore','pipe','pipe','ipc']});
@@ -21,6 +58,7 @@ test('GitHub preset settings, profile edits, real contributions and follows pers
  try {
   await call('/api/me/appearance','','GET',null,401);
   const owner=await call('/api/setup','','POST',{username:'owner',password:'interface-test-password'},201);
+  await checkAssetRevalidation(origin, owner);
   await call('/api/users',owner,'POST',{username:'member',password:'interface-test-password',role:'reader'},201);
   const member=await call('/api/login','','POST',{username:'member',password:'interface-test-password'});
   assert.deepEqual(await call('/api/me/appearance',member),{preset:'github',colorMode:'light'});

@@ -410,6 +410,7 @@ function renderResults(autoSelect = false) {
           (rating !== '' && (rating === '0' ? o.rating !== 0 : o.rating < Number(rating))))
       )
         return false;
+      if (!terms.length || routeKey === 'ai') return true;
       const hay = [
         o.name,
         o.title,
@@ -421,7 +422,7 @@ function renderResults(autoSelect = false) {
       ]
         .join(' ')
         .toLowerCase();
-      return routeKey === 'ai' || terms.every((t) => hay.includes(t));
+      return terms.every((t) => hay.includes(t));
     })
     .sort((a, b) => {
       if (routeKey === 'ai') return 0; // preserve relevance order
@@ -639,8 +640,8 @@ function appendPage() {
   if (!$('more').hidden) text('more', `显示更多（剩余 ${results.length - shown}）`);
 }
 function scheduleLayout() {
-  cancelAnimationFrame(frame);
-  frame = requestAnimationFrame(placePhotos);
+  if (frame) return;
+  frame = requestAnimationFrame(() => { frame = 0; placePhotos(); });
 }
 function placePhotos() {
   const grid = $('gallery'),
@@ -776,8 +777,10 @@ $('selection-menu').onclick = () => {
   Object.assign($('select-pop').style, { left: Math.max(6, r.right - 136) + 'px', top: r.bottom + 3 + 'px' });
 };
 function inspectSelection() {
-  for (const c of $('gallery').querySelectorAll('[data-id]'))
-    c.setAttribute('aria-pressed', String(selected.has(c.dataset.id)));
+  for (const c of $('gallery').querySelectorAll('[data-id]')) {
+    const pressed = String(selected.has(c.dataset.id));
+    if (c.getAttribute('aria-pressed') !== pressed) c.setAttribute('aria-pressed', pressed);
+  }
   text(
     'status',
     kind === 'photos'

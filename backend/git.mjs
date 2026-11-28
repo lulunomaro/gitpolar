@@ -90,8 +90,10 @@ export async function tags(repo) {
 }
 
 export async function branchOverview(repo) {
-  const [refs, tagList] = await Promise.all([branches(repo), tags(repo)]);
-  const head=(await git(repo.name,['symbolic-ref','--short','HEAD'],{allowFailure:true})).trim()||'main';
+  const [refs, tagList, symbolicHead] = await Promise.all([
+    branches(repo), tags(repo), git(repo.name, ['symbolic-ref', '--short', 'HEAD'], {allowFailure: true}),
+  ]);
+  const head = symbolicHead.trim() || 'main';
   return {branches:refs,tags:tagList,defaultBranch:refs.some(b=>b.name===head)?head:refs[0]?.name||head};
 }
 export async function createBranch(repo,name,from,userId) {
@@ -143,9 +145,7 @@ export async function commitInfo(repo,ref,path) {
   return {hash:oid?.slice(0,7),oid,author,date,message,username:names.length===1?names[0].username:null};
 }
 export async function describe(repo,userId) {
-  const [refs, tagList] = await Promise.all([branches(repo), tags(repo)]);
-  let defaultBranch=(await git(repo.name,['symbolic-ref','--short','HEAD'],{allowFailure:true})).trim() || 'main';
-  if(refs.length && !refs.some(b=>b.name===defaultBranch)) defaultBranch=refs[0].name;
+  const {branches: refs, tags: tagList, defaultBranch} = await branchOverview(repo);
   const commit=refs.length?await commitInfo(repo,defaultBranch):{author:'',message:'Empty repository',date:repo.created_at,hash:''};
   const prefs=db.prepare('SELECT kind FROM preferences WHERE user_id=? AND repo_id=?').all(userId,repo.id).map(r=>r.kind);
   const b=Object.fromEntries(refs.filter(r=>r.name!=='main').map(r=>[r.name,{oid:r.oid}]));
@@ -177,34 +177,62 @@ const binaryExtensions=new Set(['.sldprt','.sldasm','.slddrw','.sldlfp','.slddrt
 export async function fileContent(repo,ref,path) {
   filePath(path);const oid=await resolveRef(repo,ref),index=await commitIndex(repo,oid),entry=index.byPath.get(path);
   if(!entry)fail(404,'File not found.');
+  return readEntry(repo, entry, index);
+}
+async function readEntry(repo, entry, index) {
   if(entry.size>512*1024) return {...entry,binary:true,tooLarge:true};
-  const bytes=entry.size<=1024?(await smallBlobs(repo,index)).get(entry.oid):await git(repo.name,['cat-file','blob',entry.oid],{buffer:true,max:1024*1024});
+  const bytes=index && entry.size<=1024?(await smallBlobs(repo,index)).get(entry.oid):await git(repo.name,['cat-file','blob',entry.oid],{buffer:true,max:1024*1024});
   const lfs=lfsPointer(bytes);
   if(lfs) {
     const record=db.prepare('SELECT size,complete FROM lfs_objects WHERE repo_id=? AND oid=?').get(repo.id,lfs.oid);
     const info=record?.complete?await stat(join(lfsRoot,repo.id,lfs.oid.slice(0,2),lfs.oid.slice(2,4),lfs.oid)).catch(()=>null):null;
     return {...entry,size:lfs.size,binary:true,lfs:true,lfsOid:lfs.oid,lfsAvailable:Boolean(record?.complete && record.size===lfs.size && info?.isFile() && info.size===lfs.size)};
   }
-  const binary=bytes.includes(0)||binaryExtensions.has(extname(path).toLowerCase());
+  const binary=bytes.includes(0)||binaryExtensions.has(extname(entry.path).toLowerCase());
   return {...entry,binary,...(!binary?{text:bytes.toString('utf8')}:{} )};
 }
 export async function browse(repo,ref,path='') {
   const [refs, tagList] = await Promise.all([branches(repo), tags(repo)]);
   if(!refs.length && !tagList.length) return {empty:true,ref:'main',path:'',entries:[],branches:[],tags:[],commit:{author:'',message:'Empty repository'}};
-  const oid=await resolveRef(repo,ref),commit=await commitInfo(repo,oid);
-  let file;
-  if(path) { try {file=await fileContent(repo,oid,path);}catch(error){if(error.status!==404)throw error;} }
-  let entries;
-  try {entries=file?[]:await tree(repo,oid,path);}
-  catch(error) {if(error.status!==404)throw error;return {ref,oid,path,missing:true,branches:refs,tags:tagList,commit,entries:[],locks:[]};}
-  const enriched=[];
-  for(let offset=0;offset<entries.length;offset+=8) enriched.push(...await Promise.all(entries.slice(offset,offset+8).map(async e=>({...e,lastCommit:await commitInfo(repo,oid,e.path)}))));
-  let readme=null;
-  const readmeName=entries.find(e=>e.type==='blob' && /^readme\.md$/i.test(e.name));
-  if(readmeName) readme=await fileContent(repo,oid,readmeName.path);
+  const oid = await resolveRef(repo, ref);
+  const [content, commit, count] = await Promise.all([
+    browsePath(repo, oid, path),
+    commitInfo(repo, oid),
+    git(repo.name, ['rev-list', '--count', oid]),
+  ]);
+  const snapshot = {ref, oid, path, branches: refs, tags: tagList, commit};
+  if (content.missing) return {...snapshot, ...content, locks: []};
   const locks=db.prepare('SELECT l.id,l.path,l.locked_at,u.username AS owner FROM locks l JOIN users u ON u.id=l.owner_id WHERE l.repo_id=? ORDER BY l.locked_at').all(repo.id);
-  const commitCount = Number((await git(repo.name,['rev-list','--count',oid])).trim());
-  return {ref,oid,path,file,entries:enriched,readme,branches:refs,tags:tagList,commit,commitCount,locks};
+  return {...snapshot, ...content, locks, commitCount: Number(count.trim())};
+}
+async function browsePath(repo, oid, path) {
+  if (path) {
+    try {
+      const file = await fileContent(repo, oid, path);
+      return {file, entries: [], readme: null};
+    } catch (error) { if (error.status !== 404) throw error; }
+  }
+  let entries;
+  try { entries = await tree(repo, oid, path); }
+  catch (error) {
+    if (error.status !== 404) throw error;
+    return {missing: true, entries: []};
+  }
+  const readmeEntry = entries.find(e => e.type === 'blob' && /^readme\.md$/i.test(e.name));
+  const [history, readme] = await Promise.all([
+    directoryHistory(repo, oid, entries),
+    // ls-tree already supplied this exact blob. A directory README doesn't need an index of the entire commit.
+    readmeEntry ? readEntry(repo, readmeEntry) : null,
+  ]);
+  return {entries: history, readme};
+}
+async function directoryHistory(repo, oid, entries) {
+  const enriched = [];
+  for (let offset = 0; offset < entries.length; offset += 8) {
+    const batch = entries.slice(offset, offset + 8);
+    enriched.push(...await Promise.all(batch.map(async entry => ({...entry, lastCommit: await commitInfo(repo, oid, entry.path)}))));
+  }
+  return enriched;
 }
 export async function commitFiles(repo,user,branch,files,message,expectedHead) {
   const restriction = albumRefError(repo,'refs/heads/'+branch,user.id);
