@@ -1,0 +1,110 @@
+/* Motion for the GitHub preset, including the album and business workspaces. */
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-preset='github'] {
+    --gp-settle: cubic-bezier(.2,.82,.26,1.18);
+    --gp-arrive: cubic-bezier(.18,.76,.22,1);
+    --gp-glint: rgb(105 159 219 / .24);
+  }
+  :root[data-preset='github'][data-theme='dark'] { --gp-glint: rgb(201 228 255 / .24); }
+
+  :root[data-preset='github'] [data-gp-press] {
+    scale: 1;
+    translate: 0 0;
+    transition: translate 290ms var(--gp-settle), scale 300ms var(--gp-settle);
+  }
+  /* Both attributes are set only for statically positioned hosts. */
+  :root[data-preset='github'] :is([data-gp-relative], [data-gp-track]) { position: relative !important; }
+  :root[data-preset='github'] [data-gp-press='held'] {
+    scale: var(--gp-scale-x) var(--gp-scale-y);
+    translate: var(--gp-drag-x, 0px) var(--gp-drag-y, 0px);
+    transition-duration: 85ms, 110ms;
+    transition-timing-function: ease-out;
+  }
+  :root[data-preset='github'] .gp-press-light {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    border-radius: inherit;
+    background: radial-gradient(circle at var(--gp-light-x) var(--gp-light-y), var(--gp-glint), transparent 72%);
+    opacity: 0;
+    transition: opacity 180ms ease-out;
+  }
+  :root[data-preset='github'] [data-gp-press='held'] > .gp-press-light { opacity: 1; }
+  :root[data-preset='github'] :is(.primary, #login) > .gp-press-light { --gp-glint: rgb(255 255 255 / .28); }
+
+  :root[data-preset='github'] .gp-travel-line {
+    position: absolute;
+    z-index: 1;
+    display: block;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    pointer-events: none;
+    transform-origin: top left;
+    border-radius: 3px;
+  }
+  :root[data-preset='github'] [data-gp-line='after']::after,
+  :root[data-preset='github'] [data-gp-line='before']::before { visibility: hidden; }
+  :root[data-preset='github'] [data-gp-line='border'] { border-bottom-color: transparent !important; }
+
+  @supports selector(:has(*)) {
+    :root[data-preset='github'] #ai-modes:not([hidden]) {
+      display: inline-grid;
+      grid-template-columns: repeat(2, 1fr);
+      isolation: isolate;
+      position: relative;
+      background: var(--card);
+    }
+    :root[data-preset='github'] #ai-modes::before {
+      content: '';
+      position: absolute;
+      z-index: -1;
+      inset: 0 50% 0 0;
+      background: var(--tint);
+      border-radius: inherit;
+      transition: transform 245ms var(--gp-settle);
+    }
+    :root[data-preset='github'] #ai-modes:has([data-mode='text'][aria-pressed='true'])::before { transform: translateX(100%); }
+    :root[data-preset='github'] #ai-modes button { background: transparent; }
+  }
+
+  /* Let the browser own disclosure, hit testing and focus. Only its presentation changes. */
+  @supports (transition-behavior: allow-discrete) {
+    :root[data-preset='github'] :is(dialog, [popover]) {
+      --gp-closed-offset: 0 6px;
+      --gp-closed-scale: .986;
+      transition: opacity 135ms ease-out, translate 205ms var(--gp-arrive), scale 205ms var(--gp-arrive),
+        display 205ms allow-discrete, overlay 205ms allow-discrete;
+    }
+    :root[data-preset='github'] :is(#navigation, .gp-drawer) { --gp-closed-offset: -32px 0; --gp-closed-scale: 1; }
+    :root[data-preset='github'] :is(#dialog.is-account-menu, .gp-account-drawer) { --gp-closed-offset: 32px 0; --gp-closed-scale: 1; }
+    :root[data-preset='github'] :is(dialog:not([open]), [popover]:not(:popover-open)) {
+      opacity: 0;
+      translate: var(--gp-closed-offset);
+      scale: var(--gp-closed-scale);
+      pointer-events: none;
+    }
+    :root[data-preset='github'] dialog::backdrop {
+      transition: opacity 150ms ease, display 150ms allow-discrete, overlay 150ms allow-discrete;
+    }
+    :root[data-preset='github'] dialog:not([open])::backdrop { opacity: 0; pointer-events: none; }
+    @starting-style {
+      :root[data-preset='github'] :is(dialog[open], :popover-open) {
+        opacity: 0;
+        translate: var(--gp-closed-offset);
+        scale: var(--gp-closed-scale);
+      }
+      :root[data-preset='github'] dialog[open]::backdrop { opacity: 0; }
+    }
+  }
+  :root[data-preset='github'] :is(.gp-menu, .gh-list-filter)[open] > nav,
+  :root[data-preset='github'] .branch-picker[open] .branch-picker-panel,
+  :root[data-preset='github'] #viewer[open] #stage > img {
+    animation: gp-surface-in 165ms var(--gp-arrive);
+  }
+  @keyframes gp-surface-in {
+    from { opacity: .45; translate: 0 3px; }
+    to { opacity: 1; translate: 0 0; }
+  }
+}

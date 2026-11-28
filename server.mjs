@@ -34,7 +34,7 @@ const runtimeBuild = await runtimeFingerprint();
 const events=new EventEmitter();events.setMaxListeners(1000);
 const changed=name=>events.emit('repository',name);
 const assets=new Map([
-  ...['appearance.js','icons.js','shell.js','github-app.js','collaboration.js','collaboration.css','github.css','workspace-manifest.json'].map(file=>['/ui/'+file,['ui/'+file,file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':'text/javascript; charset=utf-8']]),
+  ...['appearance.js','icons.js','shell.js','motion.js','motion.css','github-app.js','collaboration.js','collaboration.css','github.css','workspace-manifest.json'].map(file=>['/ui/'+file,['ui/'+file,file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':'text/javascript; charset=utf-8']]),
   ['/albums',['albums/index.html','text/html; charset=utf-8']],['/albums/',['albums/index.html','text/html; charset=utf-8']],
   ...['ui.js','ai.js','pulls.js','vendor/serpent-selection.js'].map(file=>['/albums/'+file,['albums/'+file,'text/javascript; charset=utf-8']]),
   ['/albums/vendor/serpent-layout.js',['albums/vendor/serpent-layout.js','text/javascript; charset=utf-8']],

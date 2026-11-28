@@ -1,3 +1,4 @@
+import './motion.js';
 import { icons } from './icons.js';
 const esc = (value) =>
   String(value ?? '').replace(

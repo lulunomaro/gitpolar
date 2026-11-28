@@ -8,6 +8,48 @@ from playwright.sync_api import sync_playwright,expect
 
 ROOT=Path(__file__).resolve().parents[1];ART=Path(sys.argv[1]) if len(sys.argv)>1 else ROOT/'artifacts'/'interface-ui';ART.mkdir(parents=True,exist_ok=True)
 
+def repository_motion(page):
+    nav = page.locator('#top-nav')
+    menu = page.locator('#menu-toggle')
+    # Freeze the marker partway across the header, then change destinations before it lands.
+    page.evaluate("""() => {
+        const nav = document.querySelector('#top-nav');
+        const samples = window.markerSamples = [];
+        window.markerObserver = new MutationObserver(() => {
+            const marker = nav.querySelector('.gp-travel-line');
+            const animation = marker?.getAnimations()[0];
+            if (!animation || samples.at(-1)?.marker === marker) return;
+            animation.pause(); animation.currentTime = 0;
+            const start = marker.getBoundingClientRect().x;
+            animation.currentTime = 110;
+            samples.push({marker, start, middle: marker.getBoundingClientRect().x});
+            nav.dataset.samples = samples.length;
+        });
+        markerObserver.observe(nav, {childList: true});
+    }""")
+    nav.get_by_text('Issues').click()
+    expect(nav).to_have_attribute('data-samples', '1')
+    nav.get_by_text('Git Graph', exact=True).click()
+    expect(nav).to_have_attribute('data-samples', '2')
+    first, second = page.evaluate('markerSamples.map(({start, middle}) => [start, middle])')
+    assert abs(first[1] - first[0]) > 10 and abs(second[0] - first[1]) < 2, (first, second)
+    page.evaluate('markerObserver.disconnect()')
+
+    # Changing the OS preference during a gesture must restore the actual tab and release the button.
+    menu.hover(); page.mouse.down()
+    expect(menu).to_have_attribute('data-gp-press', 'held')
+    page.emulate_media(reduced_motion='reduce')
+    expect(page.locator('[data-gp-press], [data-gp-line], .gp-travel-line')).to_have_count(0)
+    assert nav.locator('[aria-current=page]').evaluate("e => getComputedStyle(e, '::after').visibility") == 'visible'
+    page.mouse.move(1, 1); page.mouse.up()
+    page.emulate_media(reduced_motion='no-preference')
+    menu.focus(); page.keyboard.down('Space')
+    expect(menu).to_have_attribute('data-gp-press', 'held')
+    page.keyboard.up('Space'); expect(page.locator('#navigation[open]')).to_be_visible()
+    page.keyboard.press('Escape'); expect(menu).to_be_focused()
+    nav.get_by_text('Code', exact=True).click(); expect(page.locator('.file-list')).to_be_visible()
+
+
 def collaboration_ui(origin,browser,owner,errors):
     headers={'Origin':origin}
     password='local-browser-review-fixture'
@@ -89,6 +131,7 @@ def run(origin,browser,data_dir):
     page.goto(origin+'/#/');expect(page.locator('.gh-home-feed')).to_be_visible();page.screenshot(path=str(ART/'github-dashboard-dark.png'),full_page=True)
     page.goto(origin+'/#/settings/appearance');page.locator('[data-gh-action=color][data-mode=light]').click();expect(page.locator('html')).to_have_attribute('data-theme','light')
     page.goto(origin+'/#/repos/robot-mechanical');expect(page.locator('.file-list')).to_be_visible();expect(page.locator('#top-nav')).to_contain_text('Git Graph');page.screenshot(path=str(ART/'github-repository.png'),full_page=True)
+    repository_motion(page)
     about=page.locator('.repo-about').bounding_box();files=page.locator('.repo-files').bounding_box();assert about['x']>files['x']+files['width'],(about,files)
     page.get_by_role('button',name='Go to file',exact=True).click();page.locator('#search-query').fill('README');expect(page.locator('.search-hit')).to_have_count(1);page.locator('.search-hit').click();expect(page.locator('.code-body')).to_be_visible();page.goto(origin+'/#/repos/robot-mechanical')
     page.locator('.branch-picker summary').click();expect(page.get_by_role('tab',name='Branches',exact=True)).to_be_visible();page.get_by_role('tab',name='Tags',exact=True).click();page.get_by_role('searchbox',name='Find a tag',exact=True).fill('v1');page.get_by_role('searchbox',name='Find a tag',exact=True).press('Enter');expect(page.locator('.version-banner')).to_contain_text('Viewing tag v1.0');expect(page.locator('.file-list')).to_be_visible();page.locator('.branch-picker summary').click();expect(page.get_by_role('tab',name='Tags',exact=True)).to_have_attribute('aria-selected','true');page.keyboard.press('Escape')

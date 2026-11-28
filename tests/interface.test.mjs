@@ -51,6 +51,6 @@ test('GitHub preset settings, profile edits, real contributions and follows pers
    const response=await fetch(origin+page);const html=await response.text();assert.ok(html.includes('/ui/appearance.js'),page);assert.ok(html.includes('/ui/github.css'),page);
   }
   const manifest=await fetch(origin+'/ui/workspace-manifest.json').then(r=>r.json());assert.equal(manifest.id,'workspace');
-  for(const file of ['github-app.js','github.css','icons.js','shell.js'])assert.equal((await fetch(origin+'/ui/'+file)).status,200,file);
+  for(const file of ['github-app.js','github.css','icons.js','shell.js','motion.js','motion.css'])assert.equal((await fetch(origin+'/ui/'+file)).status,200,file);
  } finally {if(child.exitCode===null){const done=once(child,'exit');child.send('stop');await done;}await rm(dir,{recursive:true,force:true});}
 });
