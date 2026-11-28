@@ -17,9 +17,18 @@ async function launch(directory,extra={},mock=false){
     globalThis.fetch=async(url,options={})=>{
       const address=new URL(url),value=options.body?JSON.parse(options.body):{};
       const response=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
-      if(address.href==='https://accounts.feishu.cn/oauth/v3/token')return response({access_token:value.grant_type==='client_credentials'?'app-token':value.code,expires_in:7200});
+      if(address.href==='https://open.feishu.cn/open-apis/authen/v2/oauth/token'){
+        const expectedId=process.env.FEISHU_LOGIN_APP_ID||process.env.FEISHU_APP_ID;
+        const expectedSecret=process.env.FEISHU_LOGIN_APP_SECRET||process.env.FEISHU_APP_SECRET;
+        if(value.grant_type!=='authorization_code'||!value.code_verifier||value.client_id!==expectedId||value.client_secret!==expectedSecret)return response({error:'invalid_client'});
+        return response({access_token:value.code,expires_in:7200});
+      }
+      if(address.href==='https://accounts.feishu.cn/oauth/v3/token'&&value.grant_type==='client_credentials')return response({access_token:'app-token',expires_in:7200});
       if(address.pathname==='/open-apis/authen/v1/user_info'){
-        const code=options.headers.Authorization.slice(7);return response({code:0,data:{open_id:'ou_'+code,tenant_key:code==='denied'?'foreign-tenant':'team-tenant',name:'飞书成员'}});
+        const code=options.headers.Authorization.slice(7);
+        const switched={oldOwner:['team-tenant','old-owner','subject-a'],newOwner:['team-tenant','new-owner','subject-a'],secondMember:['team-tenant','new-member','subject-b'],otherTenant:['another-tenant','different-person','subject-a']};
+        const [tenant_key,id,union_id]=switched[code]||[code==='denied'?'foreign-tenant':'team-tenant',code];
+        return response({code:0,data:{open_id:'ou_'+id,union_id,tenant_key,name:'飞书成员'}});
       }
       if(address.pathname.endsWith('/records/search')){
         if(address.pathname.includes('/tables/inventory/'))return response({code:0,data:{items:[{record_id:'rec_stock',fields:{'物料名称':[{text:'M3螺钉'}],'规格型号':'M3×12','单位':'个','库存数量':32,'库位':'A-02'}}],has_more:false}});
@@ -35,7 +44,7 @@ async function launch(directory,extra={},mock=false){
       }
       throw new Error('Unexpected test network request');
     };`);
-  let logs='';const child=spawn(process.execPath,[...(mock?['--import',pathToFileURL(typeof mock === 'string' ? mock : preload).href]:[]),'server.mjs'],{cwd:root,windowsHide:true,env:{...process.env,NODE_ENV:'test',AUTH_PROVIDER:'local',HOST:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin,DATA_DIR:join(directory,'data'),GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:'',FEISHU_APP_ID:'',FEISHU_APP_SECRET:'',FEISHU_WAREHOUSE_AUTO_SYNC:'false',...extra}});
+  let logs='';const child=spawn(process.execPath,[...(mock?['--import',pathToFileURL(typeof mock === 'string' ? mock : preload).href]:[]),'server.mjs'],{cwd:root,windowsHide:true,env:{...process.env,NODE_ENV:'test',AUTH_PROVIDER:'local',HOST:'127.0.0.1',PORT:String(port),APP_ORIGIN:origin,DATA_DIR:join(directory,'data'),GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:'',FEISHU_APP_ID:'',FEISHU_APP_SECRET:'',FEISHU_LOGIN_APP_ID:'',FEISHU_LOGIN_APP_SECRET:'',FEISHU_WAREHOUSE_AUTO_SYNC:'false',...extra}});
   child.stderr.on('data',chunk=>logs+=chunk);child.stdout.on('data',chunk=>logs+=chunk);
   for(let i=0;i<150;i++){if(child.exitCode!==null)throw new Error(logs);try{if((await fetch(origin+'/api/health')).ok)return{origin,stop:async()=>{if(child.exitCode!==null)return;const stopped=once(child,'exit');child.kill();await stopped;}};}catch{}await pause(30);}
   child.kill();throw new Error('Test server failed: '+logs);
@@ -138,6 +147,44 @@ test('Feishu OAuth uses PKCE, identity binding, allowlists and persistent gitpol
     await server.stop();server=await launch(directory,configured,true);
     const again=await loginOAuth(server,'manager');assert.equal((await request(server,'/api/session',{cookie:again.cookie})).value.user.id,setup.value.user.id);
   }finally{await server.stop();}
+});
+
+test('website sign-in uses only its own client and retains verified identities across an application switch', {timeout:30000}, async () => {
+  const dir=await mkdtemp(join(tmpdir(),'gitpolar-web-login-'));
+  const options={...configured,AUTH_PROVIDER:'feishu',FEISHU_ADMIN_OPEN_IDS:'ou_old-owner'};
+  let server=await launch(dir,options,true);
+  try {
+    const first=await loginOAuth(server,'oldOwner',undefined,false,'/');
+    const before=(await request(server,'/api/session',{cookie:first.cookie})).value.user;
+    assert.equal(before.role,'admin');
+    await server.stop();
+    server=await launch(dir,{...options,FEISHU_LOGIN_APP_ID:'website-id',FEISHU_LOGIN_APP_SECRET:'website-secret'},true);
+    const metadata=(await request(server,'/api/session')).value;
+    assert.equal(metadata.feishuLoginMethod,'web');
+    assert.ok(metadata.feishuLoginUrl.endsWith('/auth/feishu'));
+    const authorize=new URL((await request(server,'/auth/feishu')).location);
+    assert.equal(authorize.searchParams.get('client_id'),'website-id');
+    assert.equal(authorize.searchParams.has('scope'),false);
+    assert.equal(authorize.searchParams.has('client_secret'),false);
+    assert.equal((await request(server,'/api/feishu-cli/start',{method:'POST'})).status,409);
+    assert.deepEqual((await request(server,'/api/feishu-cli/status')).value,{available:false,configured:false,mode:'web'});
+    const a=await loginOAuth(server,'newOwner',undefined,false,'/');
+    const b=await loginOAuth(server,'secondMember',undefined,false,'/');
+    const who=async cookie=>(await request(server,'/api/session',{cookie})).value.user;
+    assert.equal((await who(a.cookie)).id,before.id);
+    assert.equal((await who(a.cookie)).role,'admin');
+    assert.notEqual((await who(b.cookie)).id,before.id);
+    assert.equal((await who(b.cookie)).role,'writer');
+    const foreign=await loginOAuth(server,'otherTenant');
+    assert.equal(foreign.location,'/?auth=not-allowed');
+    await server.stop();
+    server=await launch(dir,{...options,FEISHU_LOGIN_APP_ID:'incomplete'},true);
+    const incomplete=(await request(server,'/api/session')).value;
+    assert.equal(incomplete.feishuLoginMethod,'web');
+    assert.equal(incomplete.feishuLoginUrl,null);
+    assert.equal((await request(server,'/auth/feishu')).status,503);
+    assert.equal((await request(server,'/api/feishu-cli/start',{method:'POST'})).status,409);
+  } finally { await server.stop(); }
 });
 
 test('Feishu warehouse retries lost acknowledgements without duplicate receipts and reads remote inventory',{timeout:45000},async()=>{

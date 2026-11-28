@@ -5,7 +5,7 @@ import { dataRoot, repoRoot, lfsRoot, dbPath, root, namespace, origin, githubCon
 import { requireAuth, body, json, fail, createUser, passwordHash } from './auth.mjs';
 import { git, branchOverview } from './git.mjs';
 import { releaseLock } from './lfs.mjs';
-import { feishuConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
+import { feishuLoginConfigured,feishuCallbackUrl,hasFeishuIdentity } from './feishu.mjs';
 import { feishuCliStatus } from './feishu-cli.mjs';
 import { requestOrigin } from './request-origin.mjs';
 
@@ -109,14 +109,14 @@ async function overview(refresh) {
   const diagnostics = [
     {id:'git', status:gitVersion ? 'ok' : 'warning', title:'Git Smart HTTP', detail:gitVersion || 'Git is unavailable.'},
     {id:'lfs', status:gitLfsVersion ? 'ok' : 'warning', title:'Git LFS', detail:gitLfsVersion || 'Install git-lfs in the NAS container.'},
-    {id:'oauth', status:cliStatus.configured||feishuConfigured ? 'ok' : 'warning', title:'Feishu sign-in', detail:cliStatus.configured ? 'Feishu CLI QR sign-in is ready.' : feishuConfigured ? 'Feishu browser OAuth is configured.' : 'Initialize the NAS Feishu CLI application before signing in.'},
+    {id:'oauth', status:cliStatus.configured||feishuLoginConfigured ? 'ok' : 'warning', title:'Feishu sign-in', detail:feishuLoginConfigured ? 'Feishu website sign-in is configured.' : cliStatus.configured ? 'Feishu CLI QR sign-in is ready.' : 'Configure the Feishu website login credentials on the NAS.'},
     {id:'repositories', status:counts.errorRepositories ? 'warning' : 'ok', title:'Repository creation', detail:counts.errorRepositories ? counts.errorRepositories + ' repository creation record(s) need inspection.' : 'No failed repository creation records.'},
     {id:'storage', status:storage.warnings.length ? 'warning' : 'ok', title:'Storage scan', detail:storage.warnings.length ? 'Storage usage is partial; see storage warnings.' : 'Git, LFS and SQLite usage scanned.'}
   ];
   return {
     service:{name:'gitpolar',version,nodeVersion:process.version,platform:process.platform,uptimeSeconds:Math.floor(process.uptime())},
     counts, storage,
-    deployment:{origin:origin.origin,namespace,dataRoot,repositoryRoot:repoRoot,lfsRoot,databasePath:dbPath,authProvider,githubConfigured:authProvider!=='feishu'&&githubConfigured,githubCallbackUrl:callbackUrl,feishuConfigured:feishuConfigured||cliStatus.configured,feishuCliConfigured:cliStatus.configured,feishuCliAvailable:cliStatus.available,feishuCallbackUrl,maxLfsBytes,maxPreviewBytes,gitVersion,gitLfsVersion},
+    deployment:{origin:origin.origin,namespace,dataRoot,repositoryRoot:repoRoot,lfsRoot,databasePath:dbPath,authProvider,githubConfigured:authProvider!=='feishu'&&githubConfigured,githubCallbackUrl:callbackUrl,feishuConfigured:feishuLoginConfigured||cliStatus.configured,feishuCliConfigured:cliStatus.configured,feishuCliAvailable:cliStatus.available,feishuCallbackUrl,maxLfsBytes,maxPreviewBytes,gitVersion,gitLfsVersion},
     diagnostics
   };
 }

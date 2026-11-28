@@ -34,7 +34,13 @@ Docker 镜像已安装固定版本 @larksuite/cli@1.0.100，CLI 配置持久化�
 
 ## 网页 OAuth
 
-配置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET` 并在飞书开放平台注册站点的回调地址后，同一按钮会在当前标签进入飞书网页 OAuth 授权，再返回站点首页的个人工作台。
+在战队的飞书开放平台创建或选用专供 `gitpolar` 登录的自建应用，在「安全设置」中登记 `APP_ORIGIN/auth/feishu/callback`。将应用发布给要登录的队员。gitpolar 用授权码交换用户令牌并读取本人基本身份，登录流程只使用本次令牌。
+
+Ubuntu NAS 可运行 `sudo python3 /opt/gitpolar/current/deploy/ubuntu/configure-feishu-login.py`，按提示输入网站应用的 App ID 和 App Secret。脚本向飞书校验凭证，再启用网页登录并检查实际授权跳转。`--check` 可查看需要登记的回调地址。
+
+把该应用的 `FEISHU_LOGIN_APP_ID` 和 `FEISHU_LOGIN_APP_SECRET` 配置在 NAS 私有环境文件中，重启服务。二者填写完整后，登录按钮会进入飞书官方授权页面。配置其中任一项即选定网页登录，填写不完整时，登录页会提示管理员补全。库存同步单独使用 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。
+
+切换已有成员的网站前先核对账号映射。飞书 `open_id` 随应用变化，项管名单、已有账号、仓库和个人空间需要关联回原先的 gitpolar 用户 ID。双方属于同一应用开发者时，系统使用飞书核验的同一租户 `union_id` 关联已有账号。建议在切换前用原账号登录一次，使站点记录该标识。
 
 ## 接口与部署
 

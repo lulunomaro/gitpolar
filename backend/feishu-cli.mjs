@@ -6,7 +6,7 @@ import { constants } from 'node:fs';
 import { basename, delimiter, dirname, extname, join, resolve } from 'node:path';
 import { cookie, fail, hash, HttpError, json, newSession, random, redeliverFeishuSession, requireOrigin, setCookie } from './auth.mjs';
 import { dataRoot } from './config.mjs';
-import { getOrCreateFeishuUser } from './feishu.mjs';
+import { dedicatedFeishuLogin, getOrCreateFeishuUser } from './feishu.mjs';
 
 const flowCookie = 'gitpolar_feishu_cli_flow';
 const directory = join(dataRoot, 'feishu-cli');
@@ -118,6 +118,7 @@ async function isolateConfiguration(flow, appId) {
 }
 
 export async function feishuCliStatus() {
+  if (dedicatedFeishuLogin) return {available: false, configured: false, mode: 'web'};
   if (cachedStatus && cachedStatus.until > Date.now()) return {...cachedStatus.value};
   if (!statusWork) statusWork = (async () => {
     const bin = await executable();
@@ -263,6 +264,7 @@ async function start(req, res) {
 export async function feishuCliApi(req, res, pathname, params) {
   res.setHeader('Cache-Control', 'no-store');
   if (pathname === '/api/feishu-cli/status' && req.method === 'GET') return json(res, await feishuCliStatus());
+  if (dedicatedFeishuLogin) fail(409, '本站已选择飞书网页登录，请从登录页继续。');
   if (pathname === '/api/feishu-cli/start' && req.method === 'POST') return start(req, res);
   if (pathname === '/api/feishu-cli/cancel' && req.method === 'POST') {
     requireOrigin(req);

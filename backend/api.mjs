@@ -23,7 +23,7 @@ import { adminApi } from './admin.mjs';
 import { procurementApi } from './procurement.mjs';
 import { warehouseApi } from './feishu-warehouse.mjs';
 import { feishuCliApi } from './feishu-cli.mjs';
-import { feishuConfigured,hasFeishuIdentity } from './feishu.mjs';
+import { dedicatedFeishuLogin,feishuLoginConfigured,hasFeishuIdentity } from './feishu.mjs';
 import { firmwareApi } from './firmware.mjs';
 import { albumList, albumView, albumMedia, savePhotoSelection, changeAlbumStar, visibleAlbumStars } from './album.mjs';
 import { exportSerpentActivity } from './album-export.mjs';
@@ -50,7 +50,7 @@ export async function api(req,res,pathname,params,changed,events) {
     const auth=authenticate(req,{includePersonal:true}),origin=requestOrigin();
     const team=!auth?.user?.personalOnly;
     const avatars=auth?Object.fromEntries(db.prepare('SELECT u.username,a.version FROM profile_avatars a JOIN users u ON u.id=a.user_id WHERE u.id=? OR (?=1 AND NOT EXISTS(SELECT 1 FROM personal_workspaces w WHERE w.user_id=u.id))').all(auth.user.id,+team).map(v=>[v.username,v.version])):{};
-    return json(res,{avatars,mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,authProvider,setupRequired:!userCount(),feishuLoginUrl:feishuConfigured?new URL('/auth/feishu',origin).href:null,feishuCallbackUrl:new URL('/auth/feishu/callback',origin).href,feishuLinked:Boolean(auth?.user && (auth.user.personalOnly || hasFeishuIdentity(auth.user.id))),callbackUrl:new URL('/auth/github/callback',origin).href,loginUrl:authProvider!=='feishu'&&githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{personalWorkbench:personalWorkspacesEnabled,procurement:team,admin:team,repositoryContext:team,git:team,lfs:team,locks:team,cad:team,preview:team,hydratedArchives:team,history:team,ssh:false,issues:team,pulls:team,firmware:team&&Boolean(process.env.FIRMWARE_GIT_URL)}});
+    return json(res,{avatars,mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,authProvider,setupRequired:!userCount(),feishuLoginMethod:dedicatedFeishuLogin||feishuLoginConfigured?'web':'cli',feishuLoginUrl:feishuLoginConfigured?new URL('/auth/feishu',origin).href:null,feishuCallbackUrl:new URL('/auth/feishu/callback',origin).href,feishuLinked:Boolean(auth?.user && (auth.user.personalOnly || hasFeishuIdentity(auth.user.id))),callbackUrl:new URL('/auth/github/callback',origin).href,loginUrl:authProvider!=='feishu'&&githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{personalWorkbench:personalWorkspacesEnabled,procurement:team,admin:team,repositoryContext:team,git:team,lfs:team,locks:team,cad:team,preview:team,hydratedArchives:team,history:team,ssh:false,issues:team,pulls:team,firmware:team&&Boolean(process.env.FIRMWARE_GIT_URL)}});
   }
   if(pathname==='/api/setup' && req.method==='POST') {
     if(authProvider==='feishu')fail(403,'Only Feishu sign-in is enabled.');

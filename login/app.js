@@ -51,7 +51,11 @@ async function readSettings() {
     return false;
   }
   if (runtime.updateAvailable) throw new Error('登录服务需要重启，请联系管理员后重试。');
-  webLogin = Boolean(session.feishuLoginUrl);
+  webLogin = session.feishuLoginMethod === 'web' || Boolean(session.feishuLoginUrl);
+  if (webLogin) {
+    remember(null);
+    if (!session.feishuLoginUrl) throw new Error('gitpolar 的飞书网页登录尚未配置完成，请联系管理员。');
+  }
   serviceReady = true;
   return true;
 }
@@ -128,7 +132,7 @@ async function signIn() {
   try {
     if (!serviceReady && !await readSettings()) return;
     if (webLogin) {
-      location.assign('/auth/feishu?returnTo=%2F');
+      location.assign('/auth/feishu?' + new URLSearchParams({returnTo: destination}));
       return;
     }
     remember(await startFlow());
@@ -188,7 +192,7 @@ async function boot() {
   if (previousError) showError(previousError === 'not-allowed'
     ? '该飞书账号尚未获准加入工作区，请联系管理员。' : '上一次飞书授权未完成，请重新登录。');
   try {
-    if (!await readSettings()) return;
+    if (!await readSettings() || webLogin) return;
     let saved;
     try { saved = JSON.parse(sessionStorage.getItem(flowKey)); } catch { /* 没有可恢复的流程。 */ }
     if (saved?.id && Number.isFinite(saved.until) && saved.until > Date.now()) {
