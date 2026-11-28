@@ -36,9 +36,9 @@ const changed=name=>events.emit('repository',name);
 const assets=new Map([
   ...['appearance.js','icons.js','shell.js','github-app.js','collaboration.js','collaboration.css','github.css','workspace-manifest.json'].map(file=>['/ui/'+file,['ui/'+file,file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':'text/javascript; charset=utf-8']]),
   ['/albums',['albums/index.html','text/html; charset=utf-8']],['/albums/',['albums/index.html','text/html; charset=utf-8']],
-  ...['ui.js','pulls.js','vendor/serpent-selection.js'].map(file=>['/albums/'+file,['albums/'+file,'text/javascript; charset=utf-8']]),
+  ...['ui.js','ai.js','pulls.js','vendor/serpent-selection.js'].map(file=>['/albums/'+file,['albums/'+file,'text/javascript; charset=utf-8']]),
   ['/albums/vendor/serpent-layout.js',['albums/vendor/serpent-layout.js','text/javascript; charset=utf-8']],
-  ['/albums/app.js',['albums/app.js','text/javascript; charset=utf-8']],['/albums/styles.css',['albums/styles.css','text/css; charset=utf-8']],
+  ['/albums/ai.css',['albums/ai.css','text/css; charset=utf-8']],['/albums/app.js',['albums/app.js','text/javascript; charset=utf-8']],['/albums/styles.css',['albums/styles.css','text/css; charset=utf-8']],
   ['/login',['login/index.html','text/html; charset=utf-8']],['/login/',['login/index.html','text/html; charset=utf-8']],
   ['/login/app.js',['login/app.js','text/javascript; charset=utf-8']],['/login/styles.css',['login/styles.css','text/css; charset=utf-8']],
   ['/login/feishu-mark.png',['login/feishu-mark.png','image/png']],
@@ -113,7 +113,9 @@ server.listen(port,host,()=>{
   console.log(`${version}; Smart HTTP + Git LFS enabled; workspace ${namespace}`);
 });
 startCI(changed);
+const { startAlbumAI } = await import('./backend/album-ai.mjs');
+const stopAlbumAI = startAlbumAI(events);
 const stopWarehouseSync=startWarehouseSync();
 let stopping=false;
-async function shutdown(){if(stopping)return;stopping=true;stopWarehouseSync?.();events.removeAllListeners();server.closeAllConnections();await shutdownFeishuCli();server.close(()=>process.exit(0));}
+async function shutdown(){if(stopping)return;stopping=true;stopAlbumAI();stopWarehouseSync?.();events.removeAllListeners();server.closeAllConnections();await shutdownFeishuCli();server.close(()=>process.exit(0));}
 process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);

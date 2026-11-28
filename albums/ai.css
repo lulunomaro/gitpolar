@@ -1,0 +1,20 @@
+.ai-panel { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 16px; border-bottom:1px solid var(--line); background:var(--pane); }
+.ai-panel[hidden], .ai-panel [hidden] { display:none; }
+.ai-modes { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+.ai-modes button { border:0; padding:4px 9px; background:var(--card); color:var(--sub); font:inherit; cursor:pointer; }
+.ai-modes button[aria-pressed="true"] { color:var(--accent); background:var(--tint); font-weight:600; }
+.ai-progress { color:var(--sub); font-size:12px; }
+.ai-people-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(105px,1fr)); gap:16px; padding:8px; }
+.ai-people-grid > .empty { grid-column:1/-1; }
+.ai-person-card { display:flex; flex-direction:column; align-items:center; gap:3px; min-width:0; color:var(--text); text-decoration:none; }
+.ai-person-card strong { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ai-person-card small { color:var(--muted); }
+.ai-portrait { display:block; width:min(90px,100%); aspect-ratio:1; border-radius:50%; overflow:hidden; position:relative; background:var(--hover); }
+.ai-portrait img { position:absolute; width:100%; height:100%; max-width:none; object-fit:cover; }
+.ai-person-card:hover strong, .ai-panel a { color:var(--accent); }
+.ai-photo summary,.ai-panel summary { cursor:pointer; font-weight:600; }
+.ai-photo-body h4 { margin:10px 0 4px; }
+.ai-transcript { white-space:pre-wrap; overflow-wrap:anywhere; user-select:text; margin:0; }
+.ai-photo-body .chip { text-decoration:none; color:var(--accent); }
+#ai-name-form { display:flex; gap:5px; flex-wrap:wrap; margin-top:4px; }
+#ai-name { min-width:0; background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:6px; }

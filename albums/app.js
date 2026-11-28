@@ -13,6 +13,7 @@ import {
   resolveSelectionPlatform,
   resolveShiftBrowseRange,
 } from './vendor/serpent-selection.js';
+import { setupAlbumAI, aiRoute } from './ai.js';
 import { setupPulls } from './pulls.js';
 
 initIcons();
@@ -72,6 +73,7 @@ let multi = false,
   currentPullLoad = 0,
   frame = 0;
 const viewMemory = new Map();
+const ai = setupAlbumAI({api, getRepo:() => repo, getPhoto:id => photoMap.get(id), render:() => renderResults()});
 const collab = setupPulls({
   api,
   getRepo: () => repo,
@@ -139,6 +141,8 @@ function sidebar() {
       ? [
           nav('全部照片', '#/photos', 'grid', photos.length, 'photos'),
           nav('活动相册', '#/activities', 'albums', activities.length, 'activities'),
+          nav('AI 搜图', '#/ai', 'search', null, 'ai'),
+          nav('人物', '#/people', 'people', null, 'people'),
           nav('我的 Star', '#/stars', 'star', myStarCount(), 'stars'),
           nav('已评分', '#/starred', 'select', photos.filter((p) => p.rating > 0).length, 'starred'),
         ]
@@ -180,7 +184,7 @@ function reviewNav() {
 }
 function markNav() {
   for (const a of document.querySelectorAll('.nav-item')) {
-    if (a.dataset.key === routeKey || (a.dataset.key === 'stars' && routeKey === 'star-activities')) {
+    if (a.dataset.key === routeKey || (a.dataset.key === 'people' && routeKey.startsWith('person-')) || (a.dataset.key === 'stars' && routeKey === 'star-activities')) {
       a.setAttribute('aria-current', 'page');
       if (a.closest('.tree')) a.closest('.tree').open = true;
     } else a.removeAttribute('aria-current');
@@ -281,16 +285,22 @@ function route() {
             : !hash || hash === '#/photos'
               ? 'photos'
               : 'missing');
+  if (repo && hash === '#/ai') routeKey = 'ai';
+  if (repo && hash === '#/people') routeKey = 'people';
+  if (repo && /^#\/people\/\d+$/.test(hash)) routeKey = 'person-' + hash.split('/').at(-1);
   if (repo && hash === '#/stars') routeKey = 'stars';
   if (repo && hash === '#/stars/activities') routeKey = 'star-activities';
   const album = albumMap.get(routeKey);
   kind = album || ['photos', 'starred', 'stars'].includes(routeKey) ? 'photos' : routeKey;
+  if (routeKey === 'ai' || routeKey.startsWith('person-')) kind = 'photos';
   if (routeKey === 'star-activities') kind = 'activities';
   if (id && !album) kind = 'missing';
   const title =
     album?.title ||
     {
       photos: '全部照片',
+      ai: 'AI 搜图',
+      people: '人物',
       starred: '已评分',
       stars: '我的 Star',
       'star-activities': '我的 Star',
@@ -298,19 +308,19 @@ function route() {
       pulls: '相册投稿',
       repos: '相册仓库',
     }[routeKey] ||
-    '未找到活动';
+    (routeKey.startsWith('person-') ? '人物照片' : '未找到活动');
   const symbol = { photos: 'grid', activities: 'albums', pulls: 'pull', repos: 'layers' }[kind] || 'folder';
   text('heading', title);
   text('tab-title', title);
   document.title = `${title} · ${repo?.title || '相册'} · Gitpolar`;
-  $('heading-icon').replaceChildren(icon(album ? 'folder' : isStarView() ? 'star' : symbol));
+  $('heading-icon').replaceChildren(icon(aiRoute(routeKey) ? (routeKey === 'ai' ? 'search' : 'people') : album ? 'folder' : isStarView() ? 'star' : symbol));
   $('activity-star').hidden = !album;
   $('activity-star').replaceChildren(...(album ? [starButton('activity', album)] : []));
   $('star-tabs').hidden = !isStarView();
   $('stars-photos').setAttribute('aria-current', routeKey === 'stars' ? 'page' : 'false');
   $('stars-activities').setAttribute('aria-current', routeKey === 'star-activities' ? 'page' : 'false');
   $('reload-pulls').hidden = kind !== 'pulls';
-  $('filters').hidden = ['missing', 'pulls'].includes(kind);
+  $('filters').hidden = ['missing', 'pulls', 'people'].includes(kind) || routeKey === 'ai';
   $('layout-tools').hidden = kind !== 'photos';
   document.querySelectorAll('.photo-filter').forEach((n) => (n.hidden = kind !== 'photos'));
   $('upload').hidden = !repo || ref !== 'main';
@@ -348,6 +358,7 @@ function route() {
   markNav();
   closeOverlays();
   if ($('viewer').open) $('viewer').close();
+  ai.enter(routeKey, repo?.oid);
   renderResults(true);
 }
 function renderResults(autoSelect = false) {
@@ -381,8 +392,14 @@ function renderResults(autoSelect = false) {
     inspector();
     return;
   }
+  if (kind === 'people') {
+    const count = ai.showPeople($('gallery'));
+    text('total', count + ' 个分组'); text('status', '按出现照片数排列'); text('status-extra','');
+    results=[]; assetOrder=[]; inspector(); return;
+  }
+  const aiPhotos = aiRoute(routeKey);
   const title = (o) => o.name || o.title || '';
-  results = items
+  results = (aiPhotos ? ai.ids().map(id => photoMap.get(id)).filter(Boolean) : items)
     .filter((o) => {
       if (isStarView() && !o.starred) return false;
       const ys = o.years || [o.year || o.date?.slice(0, 4) || '日期未知'];
@@ -404,9 +421,10 @@ function renderResults(autoSelect = false) {
       ]
         .join(' ')
         .toLowerCase();
-      return terms.every((t) => hay.includes(t));
+      return routeKey === 'ai' || terms.every((t) => hay.includes(t));
     })
     .sort((a, b) => {
+      if (routeKey === 'ai') return 0; // preserve relevance order
       const da = a.date || a.years?.at(-1) || '',
         db = b.date || b.years?.at(-1) || '';
       if (sort !== 'name' && da !== db) return !da ? 1 : !db ? -1 : (sort === 'desc' ? -1 : 1) * cmp(da, db);
@@ -450,6 +468,7 @@ function renderResults(autoSelect = false) {
       '',
       changed ? button('清除筛选', resetFilters) : kind === 'missing' ? link('返回全部照片', '#/photos') : null
     );
+    if (aiPhotos) empty($('notice'),'search',...ai.hint());
   } else appendPage();
   inspectSelection();
 }
@@ -461,7 +480,8 @@ function resetFilters() {
 $('reset').onclick = resetFilters;
 for (const id of ['year', 'rating', 'tag', 'sort', 'search'])
   $(id).addEventListener(id === 'search' ? 'input' : 'change', () => {
-    if (loaded) renderResults();
+    if (loaded && id === 'search' && routeKey === 'ai') ai.searchChanged();
+    else if (loaded) renderResults();
   });
 const savingStars = new Set();
 let starEpoch = 0;
@@ -887,7 +907,7 @@ function inspector() {
   if (!many) {
     const actions = el('div', 'inspect-star');
     actions.append(starButton('photo', photo));
-    box.append(actions);
+    box.append(actions, ai.photoDetails(photo));
   }
   const all = ids.map((id) => photoMap.get(id)),
     commonTags = photo.tags.filter((t) => all.every((p) => p.tags.includes(t)));

@@ -10,6 +10,7 @@ const shapes = {
   sidebar: 'M3 4h18v16H3z M9 4v16m-2-12-2 2 2 2',
   inspector: 'M3 4h18v16H3z M15 4v16m2-12 2 2-2 2',
   chevrons: 'm8 9 4-4 4 4m-8 6 4 4 4-4',
+  people: 'M15 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M5 20v-2a7 7 0 0 1 14 0v2z',
   search: 'M20.5 20.5l-5-5 M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0',
   grid: 'M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z',
   image: 'M3 4h18v16H3z M3 16l5-5 4 4 3-3 6 6 M16.5 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0',

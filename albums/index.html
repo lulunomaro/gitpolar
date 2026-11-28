@@ -8,6 +8,7 @@
     <title>相册工作区 · Gitpolar</title>
     <link rel="icon" href="/assets/gitpolar-logo.png" />
     <link rel="stylesheet" href="/albums/styles.css" />
+    <link rel="stylesheet" href="/albums/ai.css" />
     <script type="module" src="/albums/app.js"></script>
     <link rel="stylesheet" href="/ui/github.css">
   <script type="module" src="/ui/shell.js"></script>
@@ -95,6 +96,14 @@
           <button class="primary compact" id="upload" hidden>
             <i data-icon="upload"></i><span>投稿</span>
           </button>
+        </div>
+        <div id="ai-panel" class="ai-panel" hidden>
+          <div id="ai-modes" class="ai-modes" role="group" aria-label="AI 搜索方式">
+            <button data-mode="semantic" aria-pressed="true">描述搜图</button><button data-mode="text" aria-pressed="false">图片文字</button>
+          </div>
+          <a id="ai-back" href="#/people" hidden>全部人物</a>
+          <details id="ai-rename" hidden><summary>命名人物</summary><form id="ai-name-form"><input id="ai-name" maxlength="60" aria-label="人物名称"><button class="secondary" id="ai-save">保存</button></form></details>
+          <span class="ai-progress" id="ai-progress" role="status"></span><button id="ai-index" class="secondary" hidden>建立或重试索引</button>
         </div>
         <nav class="star-tabs" id="star-tabs" aria-label="收藏类型" hidden>
           <a href="#/stars" id="stars-photos">照片</a

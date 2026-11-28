@@ -69,3 +69,29 @@ node scripts/import-photo-album.mjs \
 - `GET /api/repos/:name/album/serpent?ref=提交ID&activity=活动ID` 下载这个活动的 Eagle 兼容资源库。
 
 范围选择和反选逻辑来自同一版本的 `browse-selection-order.ts`、`selection-modifiers.ts`、`invert-selection.ts`。上游排版源码为 [asset-grid-layout.ts](https://github.com/dolag233/Serpent/blob/b3714d416379ba546abfb5065bf2f447dec43314/src/renderer/asset-grid-layout.ts)，外部库格式对应 [eagle-library.ts](https://github.com/dolag233/Serpent/blob/b3714d416379ba546abfb5065bf2f447dec43314/src/worker/eagle-library.ts)。浏览器本地加载转译后的模块，MIT 许可随模块附在 `albums/vendor/Serpent-LICENSE.txt`。
+
+## 相册 AI
+
+进入相册后，侧栏的「AI 搜图」支持用中文描述画面，按相关度显示最多 60 张照片。「图片文字」按照片中识别出的文字查找。「人物」按照片数量排列相似人脸分组。选中一张照片，展开检查器的「AI 识别」即可查看人物和文字。仓库负责人和管理员可以命名分组、为历史版本建立索引或重试失败的照片。人物名称适用于本仓库。
+
+Gitpolar 用当前提交里的实际 LFS 指针校验清单，按仓库、照片 SHA-256 和模型版本复用结果。默认分支在服务启动、投稿合并和 Git 推送后自动增量识别。直接在 NAS 写入 Git 的导入每五分钟补扫一次。任务保存在 `gitpolar.sqlite`，服务重启会接着处理。备份该库会同时保留人物命名和识别结果。
+
+NAS 可使用 Immich v3.4.2 的独立机器学习容器。使用 Gitpolar 的 Compose 部署时，在项目根目录运行以下命令。模型缓存在 `album-ml-cache` 卷中。
+
+```sh
+docker compose -f compose.yaml -f deploy/album-ai.compose.yaml up -d
+```
+
+Ubuntu 的原生 Gitpolar 服务可配合 `deploy/ubuntu/gitpolar-album-ml.service` 使用。安装 Podman 和 crun，将缓存目录交给容器用户，然后启动服务。
+
+```sh
+sudo install -d -m 0755 -o 65534 -g 65534 /var/cache/gitpolar-immich
+sudo podman pull ghcr.io/immich-app/immich-machine-learning@sha256:739405742a79bd7447227c553bb62ed5491aa36acf00bc667af7f9c93b6fae91
+sudo install -m 0644 deploy/ubuntu/gitpolar-album-ml.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now gitpolar-album-ml
+```
+
+在 Gitpolar 的服务环境文件中设置 `GITPOLAR_IMMICH_URL=http://127.0.0.1:3003`，重启 `gitpolar`。原生部署的推理服务只监听本机回环地址。Compose 使用容器内部网络。初次使用需要下载模型，可预先填充持久缓存。机器学习服务接收已生成的 JPEG 预览图和搜索词，浏览器使用 Gitpolar 现有的登录和权限。
+
+默认模型为 `ViT-B-16-SigLIP2__webli`、`buffalo_s` 和 `PP-OCRv5_mobile`。如更换模型，对应设置 `GITPOLAR_IMMICH_CLIP`、`GITPOLAR_IMMICH_FACE`、`GITPOLAR_IMMICH_OCR`。相同名称更换权重时还需更改 `GITPOLAR_IMMICH_REVISION`，让新索引与旧向量分开。停用只需移除 `GITPOLAR_IMMICH_URL` 后重启 Gitpolar。

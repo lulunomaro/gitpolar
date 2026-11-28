@@ -28,6 +28,7 @@ import { firmwareApi } from './firmware.mjs';
 import { albumList, albumView, albumMedia, savePhotoSelection, changeAlbumStar, visibleAlbumStars } from './album.mjs';
 import { exportSerpentActivity } from './album-export.mjs';
 import { albumPullApi } from './album-pulls.mjs';
+import { albumAiApi } from './album-ai.mjs';
 import { albumRefError } from './album-policy.mjs';
 
 function account(req,res,mutate=false) {
@@ -117,6 +118,7 @@ export async function api(req,res,pathname,params,changed,events) {
     const action=match[2]||'',ref=params.get('ref')||'main',path=params.get('path')||'';
     if(!action && req.method==='GET')return json(res,await describe(repo,user.id));
     if(collaborationRoute.test(action)) return repoCollab(req,res,repo,user,action,params,changed);
+    if(action.startsWith('album/ai/')) return albumAiApi(req,res,repo,user,action,params);
     if(proposalRoute) return albumPullApi(req,res,repo,user,action,params,changed);
     if(action==='album/stars' && req.method==='GET')return json(res,await visibleAlbumStars(repo,user.id,ref));
     if (starTarget && ['PUT','DELETE'].includes(req.method)) {

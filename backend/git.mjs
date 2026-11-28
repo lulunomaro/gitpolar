@@ -299,6 +299,17 @@ async function smallBlobs(repo,index) {
   })().catch(error=>{index.small=null;throw error;});
   return index.small;
 }
+// Verify manifest paths against one immutable Git tree before exposing derived photo data.
+export async function albumPointerMatches(repo, oid, photos) {
+  const index = await commitIndex(repo, oid);
+  const blobs = await smallBlobs(repo, index);
+  return photos.filter(photo => {
+    const entry = index.byPath.get(photo.path);
+    const blob = entry && blobs.get(entry.oid);
+    const pointer = blob && lfsPointer(blob);
+    return pointer && pointer.oid === photo.lfsOid && pointer.size === photo.size;
+  });
+}
 export async function fileIndex(repo,ref) {
   const index=await commitIndex(repo,await resolveRef(repo,ref));
   // Snapshot inspection enriches entries with LFS state, so give each caller its own objects.
