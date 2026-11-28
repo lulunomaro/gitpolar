@@ -13,7 +13,8 @@ const appearance = window.GitpolarAppearance;
 let session;
 // Use the same deterministic account image as the repository application.
 function avatar(name) {
-  let hash = 0;
+  if(session?.avatars && Object.hasOwn(session.avatars,name)) return `<span class="gp-mini-avatar "><img alt="" src="/api/profiles/${encodeURIComponent(name)}/avatar?v=${encodeURIComponent(session.avatars[name])}"></span>`;
+    let hash = 0;
   for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   const color = ['#a05bc7', '#218b7c', '#d08940', '#587bd1', '#ce6b85'][hash % 5];
   let cells = '';
@@ -31,6 +32,7 @@ const links = [
   ['/#/repos', 'repo', 'Repositories'],
   ['/#/issues', 'issue-opened', 'Issues'],
   ['/#/pulls', 'git-pull-request', 'Pull requests'],
+  ['/#/notifications','inbox','Notifications'],
   ['/albums/', 'book', '相册'],
   ['/procurement/', 'project', '采购与库存'],
   ['/#/files', 'file', '个人文件'],

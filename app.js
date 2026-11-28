@@ -47,6 +47,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   let feedKind = 'all';
   let session = null;
   let catalogReady = false;
+  let codePulls = [];
   let workbench = null;
   let uploadingFiles = false;
   let toastTimer;
@@ -91,8 +92,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       if(session.user) {
         pinned = array('pinned:' + session.user.id);
         const team = !session.user.personalOnly;
-        const [catalog, data, personal] = await Promise.all([team ? api('repos') : {repos:[]}, team ? api('issues') : {issues:[]},
-          session.capabilities.personalWorkbench ? api('workbench') : null]);
+        const [catalog, data, personal, prData, inbox] = await Promise.all([team ? api('repos') : {repos:[]}, team ? api('issues') : {issues:[]},
+          session.capabilities.personalWorkbench ? api('workbench') : null, team ? api('pulls') : {pulls:[]}, team ? api('inbox') : {items:[]}]);
+        codePulls=prData.pulls;
+        document.querySelectorAll('.notification-dot').forEach(dot=>dot.hidden=!inbox.items.some(n=>n.unread));
         workbench = personal;
         repos.splice(0,repos.length,...catalog.repos.map(r=>({...r,updatedAt:r.updated,updated:relativeTime(r.updated)})));
         tickets.splice(0,tickets.length,...data.issues.map(t=>({...t,updatedAt:t.updated,updated:relativeTime(t.updated)})));
@@ -102,10 +105,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       } else {repos.length=0;tickets.length=0;activity.length=0;if(liveEvents){liveEvents.close();liveEvents=null;}}
       catalogReady=true;
       window.GitpolarGithub?.invalidate();
-      backendError='';render();
+      window.GitpolarCollab?.invalidate();backendError='';render();
       if(session.user && !session.user.personalOnly && !liveEvents) {
         liveEvents = new EventSource('/api/events');
-        liveEvents.addEventListener('repository',()=>{browseCache.clear();refreshLive().catch(error=>notify(error.message));refreshCadLocks().catch(error=>notify(error.message));});
+        liveEvents.addEventListener('repository',()=>{if(document.querySelector('[data-collab-form][data-dirty]'))return;browseCache.clear();refreshLive().catch(error=>notify(error.message));refreshCadLocks().catch(error=>notify(error.message));});
       }
     })().catch(error=>{backendError=error.message;render();}).finally(()=>refreshPromise=null);
     return refreshPromise;
@@ -269,7 +272,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     if(navAction==='close-picker'){const picker=button.closest('.branch-picker');picker.open=false;picker.querySelector('summary').focus();}
     if(navAction==='ref-tab'){const panel=button.closest('.branch-picker-panel');panel.dataset.refTab=button.dataset.kind;panel.querySelectorAll('[role=tab]').forEach(t=>{t.setAttribute('aria-selected',String(t===button));t.tabIndex=t===button?0:-1;});const input=panel.querySelector('[data-branch-filter]');input.value='';input.placeholder=button.dataset.kind==='tags'?'Find a tag…':'Find a branch…';input.setAttribute('aria-label',button.dataset.kind==='tags'?'Find a tag':'Find a branch');panel.querySelectorAll('[data-ref-footer]').forEach(f=>f.hidden=f.dataset.refFooter!==button.dataset.kind);filterRefs(panel);}
     if(navAction==='tags'&&repo)showTags(repo,currentPath);
-    if(navAction==='branches'&&repo)showBranches(repo,ref,currentPath);
+    if(navAction==='branches'&&repo){if(window.GitpolarGithub?.isGithub())location.hash=repoHref(repo.name,'branches');else showBranches(repo,ref,currentPath);}
     if(navAction==='new-branch'&&repo)newBranch(repo,ref||repo.defaultBranch,currentPath);
     if(navAction==='confirm-delete-branch'&&branchState){openDialog('Delete branch',`<p>删除分支 <strong>${escape(branchName)}</strong>？</p><p class="dialog-note">请先比较并保留需要的改动，删除后将失去此分支的浏览入口。</p><div class="dialog-actions"><button class="button danger" data-nav-action="delete-branch" data-name="${escape(branchName)}" data-oid="${escape(oid)}">确认删除分支</button></div>`,'is-branches');}
     if(navAction==='delete-branch'&&branchState){const state=branchState;button.disabled=true;api('repos/'+state.repo.name+'/branches',{method:'DELETE',body:{name:branchName,expectedOid:oid}}).then(async()=>{browseCache.clear();await refreshLive();if(state.ref===branchName)location.hash=repoHref(state.repo.name,'code',state.defaultBranch,state.path);await showBranches(repos.find(r=>r.name===state.repo.name),state.ref===branchName?state.defaultBranch:state.ref,state.path);notify('分支已删除。');}).catch(error=>{button.disabled=false;notify(error.message);});}
@@ -452,6 +455,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
   }
 
   function avatar(name, extra = '') {
+    if(session?.avatars && Object.hasOwn(session.avatars,name)) return `<span class="avatar ${extra}"><img alt="" src="/api/profiles/${encodeURIComponent(name)}/avatar?v=${encodeURIComponent(session.avatars[name])}"></span>`;
     let hash = 0;
     for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
     const color = ['#a05bc7', '#218b7c', '#d08940', '#587bd1', '#ce6b85'][hash % 5];
@@ -532,7 +536,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       : `<span>${({profile:'Profile',users:route().parts[1],settings:'Settings',files:'Personal files'})[page] || (github && page==='home'?'Dashboard':pages.find(p => p[0] === page)?.[1] ?? 'Dashboard')}</span>`;
   }
   function githubContext() {
-    return {repos,tickets,session,workbench,activity,pinned,api,onServer,avatar,icon,escape,repoHref,starButton,personalFiles,openDialog,notify,hash:location.hash,rerender:render};
+    return {repos,tickets,codePulls,refresh:refreshLive,session,workbench,activity,pinned,api,onServer,avatar,icon,escape,repoHref,starButton,personalFiles,openDialog,notify,hash:location.hash,rerender:render};
   }
   function render() {
     repositoryNavigation.dispose();
@@ -547,6 +551,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     if(onServer && !session?.user) {view.className="view";view.innerHTML=liveWelcome();return;}
     if(onServer && session?.user && !catalogReady) {view.innerHTML=backendError?empty('Unable to load workspace',backendError):'<div class="empty" role="status">Loading workspace…</div>';return;}
     const gh=window.GitpolarGithub, context=githubContext();
+    if(onServer && page==='notifications' && !session.user.personalOnly){view.innerHTML=window.GitpolarCollab.inbox(context);document.title='Notifications · gitpolar';return;}
     if (gh && (page==='settings'||page==='profile'||page==='users'||page==='files'||gh.isGithub()&&(page==='home'||page==='pulls'))) {
       view.className='view gh-view'+(page==='settings'?' is-settings':'');
       if(page==='settings')view.innerHTML=gh.settings(context,name||'profile');
@@ -561,7 +566,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     if(onServer && repo && tab==='graph'){window.GitpolarGraph?.mount(view,repo,query);document.title='Git Graph · '+repo.name+' · gitpolar';return;}
     if(onServer && repo && tab==='compare'){window.GitpolarComparison?.mount(view,repo,query);document.title='Compare · '+repo.name+' · gitpolar';return;}
     if(onServer && repo && tab==='code' && !ensureBrowse(repo,query)) return;
-    if (repo && tabs[tab]) {
+    if (repo && (tabs[tab] || onServer && ['forks','branches','packages'].includes(tab))) {
       const ticket = id && tickets.find(t => t.repo === name && t.kind === tab && String(t.id) === id);
       view.innerHTML = repoPage(repo, tab, query, ticket, id) + footer();
     } else if (page === 'home') view.innerHTML = dashboard();
@@ -674,7 +679,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       <ul class="list" id="repo-results">${repos.map(repoRow).join('')}</ul></section>`;
   }
   function repoRow(repo) {
-    return `<li class="repo-row"><div class="repo-row-main"><h2><a href="${repoHref(repo.name)}">${escape(repo.name)}</a><span class="label">${escape(repo.visibility || 'Public')}</span></h2><p>${escape(repo.description)}</p><div class="repo-metadata">${language(repo)}${onServer&&repo.kind==='album'?`<a href="/albums/?repo=${encodeURIComponent(repo.name)}">${icon('book')}打开相册</a><span>拥有者 ${escape(repo.creator?.name||repo.creator?.username||'')}</span>`:''}<span>${icon('star')}${onServer ? repo.starCount : starred.includes(repo.name) ? 1 : 0}</span><span>Updated ${escape(repo.updated)}</span></div></div>${starButton(repo)}</li>`;
+    return `<li class="repo-row"><div class="repo-row-main"><h2><a href="${repoHref(repo.name)}">${escape(repo.name)}</a><span class="label">${escape(repo.visibility || 'Public')}</span></h2><p>${escape(repo.description)}</p><div class="repo-metadata">${language(repo)}${onServer&&repo.parent?`<a class="button" href="${repoHref(repo.parent)}">Forked from ${escape(repo.parent)}</a>`:''}${onServer&&repo.kind==='album'?`<a href="/albums/?repo=${encodeURIComponent(repo.name)}">${icon('book')}打开相册</a><span>拥有者 ${escape(repo.creator?.name||repo.creator?.username||'')}</span>`:''}<span>${icon('star')}${onServer ? repo.starCount : starred.includes(repo.name) ? 1 : 0}</span><span>Updated ${escape(repo.updated)}</span></div></div>${starButton(repo)}</li>`;
   }
   function filterRepos() {
     const needle = document.querySelector('#repo-filter').value.toLowerCase();
@@ -687,15 +692,17 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     const watch = watched.includes(repo.name);
     const files=tab==='code'?`<div class="repo-files">${filePage(repo,query)}</div>`:'';
     const codeLayout=tab==='code'?(onServer&&query.get('path')?files:`<div class="repo-layout">${files}${repoAbout(repo)}</div>`):'';
-    const content = tab === 'code' ? (onServer?repositoryNavigation.workspace(repo,codeLayout):codeLayout)
+    const collab = onServer ? window.GitpolarCollab?.repoPage(githubContext(),repo,tab,id,query) : null;
+    const content = collab ?? (tab === 'code' ? (onServer?repositoryNavigation.workspace(repo,codeLayout):codeLayout)
       : ticket ? ticketDetail(ticket) : id ? empty('Not found', 'This issue or pull request does not exist.')
-      : ['issues', 'pulls'].includes(tab) ? ticketPage(tab, repo.name) : auxiliaryPage(repo, tab);
+      : ['issues', 'pulls'].includes(tab) ? ticketPage(tab, repo.name) : auxiliaryPage(repo, tab));
     return `<header class="repo-heading" data-repo-tab="${escape(tab)}"><div class="repo-identity">${window.GitpolarGithub?.isGithub()?avatar(repo.owner,'large org'):icon('repo')}<h1><a href="#/repos">${namespaceLabel()}</a><span class="muted"> / </span><a class="repo-heading-name" href="${repoHref(repo.name)}">${name}</a></h1><span class="label">${escape(repo.visibility || 'Public')}</span></div>
       <div class="repo-heading-actions">
-        ${onServer&&repo.kind==='album'?`<a class="button primary" href="/albums/?${escape(new URLSearchParams({repo:repo.name,ref:query.get('branch')||repo.defaultBranch}))}">${icon('book')}可视化相册</a>`:''}
+        ${onServer&&repo.parent?`<a class="button" href="${repoHref(repo.parent)}">Forked from ${escape(repo.parent)}</a>`:''}${onServer&&repo.kind==='album'?`<a class="button primary" href="/albums/?${escape(new URLSearchParams({repo:repo.name,ref:query.get('branch')||repo.defaultBranch}))}">${icon('book')}可视化相册</a>`:''}
+        ${onServer?`<a class="button" href="${repoHref(repo.name,'packages')}">Packages</a>`:''}
         <button class="button" data-action="pin" data-repo="${name}" aria-pressed="${pinned.includes(repo.name)}">${icon('pin')}${pinned.includes(repo.name) ? 'Pinned' : 'Pin'}</button>
         <button class="button" data-action="watch" data-repo="${name}" aria-pressed="${watch}">${icon('eye')}${watch ? 'Unwatch' : 'Watch'}<span class="count">${onServer?repo.watchCount||0:watch?1:0}</span>${icon('chevron-down', 12)}</button>
-        <button class="button" data-action="fork" data-repo="${name}">${icon('repo-forked')}Fork<span class="count">0</span>${icon('chevron-down', 12)}</button>
+        ${repo.kind!=='album'?`<button class="button" data-action="fork" data-repo="${name}">${icon('repo-forked')}Fork<span class="count">${repo.forkCount||0}</span></button>`:''}
         ${starButton(repo)}
       </div></header>${content}`;
   }
@@ -778,7 +785,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
 
   function ticketPage(kind, repoName = '') {
     if(onServer && kind==='issues' && window.GitpolarGithub?.isGithub())return window.GitpolarGithub.issuePage(githubContext(),repoName);
-    if(onServer && kind==='pulls') return window.GitpolarGithub?.isGithub()?window.GitpolarGithub.pullPage(githubContext(),repoName):empty('Pull requests','Git 仓库托管已启用，Pull request 审查流程尚未接入。','git-pull-request');
+    if(onServer && kind==='pulls') return window.GitpolarGithub.pullPage(githubContext(),repoName);
     const items = tickets.filter(t => t.kind === kind && (!repoName || t.repo === repoName));
     const open = items.filter(t => t.state === 'open').length;
     const closed = items.length - open;
@@ -819,7 +826,8 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       const authors = [...new Set([repo.commit.author, ...items.map(t => t.author)])];
       return `<header class="page-head"><h1>Pulse</h1><span class="label">Repository overview</span></header><div class="insight-grid">${[['Merged pull requests', items.filter(t => t.kind === 'pulls' && t.state === 'closed').length], ['Open issues', items.filter(t => t.kind === 'issues' && t.state === 'open').length], ['Files', filesFor(repo).length]].map(([label, count]) => `<div class="panel insight-card"><span class="muted">${label}</span><strong>${count}</strong></div>`).join('')}</div><section class="panel readme"><div class="markdown"><h2>Contributors</h2>${authors.map(author => `<p>${avatar(author)} <strong>${escape(author)}</strong></p>`).join('')}</div></section>`;
     }
-    return `<div class="settings-layout"><nav class="settings-nav" aria-label="Repository settings"><a class="active" href="${repoHref(repo.name,'settings')}">${icon('gear')}General</a><a href="${repoHref(repo.name,'security')}">${icon('shield')}Security</a><a href="${repoHref(repo.name,'actions')}">${icon('play')}Actions</a></nav><section class="settings-main"><h2>General</h2><form id="settings-form" data-repo="${escape(repo.name)}"><label class="field">Repository name<input value="${escape(repo.name)}" readonly></label><label class="field">Description<textarea name="description" rows="3" maxlength="240">${escape(repo.description)}</textarea></label><div class="dialog-actions"><button class="button primary" type="submit">Save changes</button></div><p class="dialog-note">${onServer ? 'Changes are saved in the server database.' : 'Changes are saved in this browser for the HTML preview.'}</p></form></section></div>`;
+    const rules=onServer?window.GitpolarCollab.rules(githubContext(),repo):'';
+    return `<div class="settings-layout"><nav class="settings-nav" aria-label="Repository settings"><a class="active" href="${repoHref(repo.name,'settings')}">${icon('gear')}General</a><a href="${repoHref(repo.name,'security')}">${icon('shield')}Security</a><a href="${repoHref(repo.name,'actions')}">${icon('play')}Actions</a></nav><section class="settings-main"><h2>General</h2>${rules}<form id="settings-form" data-repo="${escape(repo.name)}"><label class="field">Repository name<input value="${escape(repo.name)}" readonly></label><label class="field">Description<textarea name="description" rows="3" maxlength="240">${escape(repo.description)}</textarea></label><div class="dialog-actions"><button class="button primary" type="submit">Save changes</button></div><p class="dialog-note">${onServer ? 'Changes are saved in the server database.' : 'Changes are saved in this browser for the HTML preview.'}</p></form></section></div>`;
   }
 
   function openDialog(title, body, kind = '') {
@@ -841,6 +849,7 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
     const needle = query.trim().toLowerCase();
     const entries = scope ? (scope.files || filesFor(scope.repo, scope.branch)).map(f => ({ title: f.path, meta: scope.repo.name, href: repoHref(scope.repo.name, 'code', scope.branch, f.path), icon: 'file' })) : [
       ...repos.map(r => ({ title: `${namespaceLabel()}/${r.name}`, meta: r.description, href: repoHref(r.name), icon: 'repo' })),
+      ...(needle && onServer ? codePulls.map(p=>({title:p.title,meta:p.repo+' #'+p.number,href:repoHref(p.repo,'pulls')+'/'+p.number,icon:'git-pull-request'})) : []),
       ...(needle ? tickets.map(t => ({ title: t.title, meta: `${t.repo} #${t.id}`, href: ticketHref(t), icon: t.kind === 'issues' ? 'issue-opened' : 'git-pull-request' })) : []),
     ];
     const matches = entries.filter(e => `${e.title} ${e.meta}`.toLowerCase().includes(needle)).slice(0, 9);
@@ -1034,10 +1043,10 @@ const GITPOLAR_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAY
       case 'add-file': editFile(repo,branch); break;
       case 'edit-readme': editFile(repo,branch,'README.md'); break;
       case 'ticket-state': ticketState = button.dataset.state; filterTickets(); break;
-      case 'fork': openDialog('Create a new fork', `<p class="dialog-note">此实例尚未启用仓库 Fork 网络。可以下载当前版本的完整工程，或用 Git clone 后创建新仓库。</p><div class="dialog-actions"><button class="button primary" data-action="download" data-repo="${escape(name)}">${icon('download')}Download ZIP</button></div>`); break;
+      case 'fork': if(onServer){location.hash=repoHref(name,'forks');break;} openDialog('Create a new fork', `<p class="dialog-note">此实例尚未启用仓库 Fork 网络。可以下载当前版本的完整工程，或用 Git clone 后创建新仓库。</p><div class="dialog-actions"><button class="button primary" data-action="download" data-repo="${escape(name)}">${icon('download')}Download ZIP</button></div>`); break;
       case 'feed-filter': openDialog('Filter feed', `<label class="field">Activity type<select id="feed-filter" class="select"><option value="all"${feedKind === 'all' ? ' selected' : ''}>All activity</option><option value="issues"${feedKind === 'issues' ? ' selected' : ''}>Issues</option><option value="pulls"${feedKind === 'pulls' ? ' selected' : ''}>Pull requests</option></select></label><div class="dialog-actions"><button class="button primary" data-action="apply-feed">Apply</button></div>`); break;
       case 'apply-feed': feedKind = document.querySelector('#feed-filter').value; dialog.close(); render(); break;
-      case 'notifications': openDialog('Notifications', `<div class="search-results">${tickets.filter(t => t.state === 'open').slice(0,5).map(t => `<a class="search-hit" href="${ticketHref(t)}">${icon(t.kind === 'issues' ? 'issue-opened' : 'git-pull-request')}<span>${escape(t.title)}<small>${namespaceLabel()}/${escape(t.repo)} #${t.id}</small></span></a>`).join('')}</div>`); break;
+      case 'notifications': if(onServer && !session?.user?.personalOnly){location.hash='/notifications';break;} openDialog('Notifications', `<div class="search-results">${tickets.filter(t => t.state === 'open').slice(0,5).map(t => `<a class="search-hit" href="${ticketHref(t)}">${icon(t.kind === 'issues' ? 'issue-opened' : 'git-pull-request')}<span>${escape(t.title)}<small>${namespaceLabel()}/${escape(t.repo)} #${t.id}</small></span></a>`).join('')}</div>`); break;
       case 'copilot': openDialog('GitHub Copilot', `<p class="dialog-note">Copilot is not connected to this local HTML preview.</p><div class="dialog-actions"><a class="button" href="https://github.com/copilot" target="_blank" rel="noopener">Open GitHub Copilot ${icon('link')}</a></div>`); break;
       case 'readme': event.preventDefault(); history.pushState(null,'',repoHref(name)); render(); document.querySelector('#readme')?.scrollIntoView({block:'start'}); break;
     }

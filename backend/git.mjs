@@ -41,7 +41,7 @@ export async function installHook(repo) {
   const content = `#!/bin/sh\nexec "$GITPOLAR_NODE" ${shellQuote(entry)}\n`;
   await writeFile(join(repoPath(repo.name),'hooks','pre-receive'),content,{mode:0o755});
 }
-export async function createRepository(user, values) {
+export async function createRepository(user, values, prepare) {
   const {name,description='',initialize=true,cad=false,kind='files'}=values;
   if(!namePattern.test(name || '')) fail(400,'Invalid repository name.');
   if(!['files','album'].includes(kind)) fail(400,'Invalid repository kind.');
@@ -68,6 +68,7 @@ export async function createRepository(user, values) {
       const ignore=await readFile(fileURLToPath(new URL('../templates/solidworks.gitignore',import.meta.url)),'utf8');
       await commitFiles(repo,user,'main',[{path:'.gitattributes',text:attributes},{path:'.gitignore',text:ignore}],'Configure Git LFS for SolidWorks');
     }
+    if (prepare) await prepare(repo);
     db.prepare("UPDATE repos SET status='ready' WHERE id=?").run(repo.id);
     return repo;
   } catch(error) { db.prepare("UPDATE repos SET status='error' WHERE id=?").run(repo.id); throw error; }
@@ -134,9 +135,12 @@ export async function resolveRef(repo,ref='main') {
   fail(404,'Branch or tag not found.');
 }
 export async function commitInfo(repo,ref,path) {
-  const result=await git(repo.name,['--literal-pathspecs','log','-1','--format=%H%x00%an%x00%aI%x00%s',ref,...(path?['--',path]:[])]);
-  const [oid,author,date,message]=result.trimEnd().split('\0');
-  return {hash:oid?.slice(0,7),oid,author,date,message};
+  const result=await git(repo.name,['--literal-pathspecs','log','-1','--format=%H%x00%an%x00%aI%x00%s%x00%ae',ref,...(path?['--',path]:[])]);
+  const [oid,author,date,message,email='']=result.trimEnd().split('\0');
+  const handle=/^([a-z0-9][a-z0-9_-]{0,47})@(?:local|gitpolar\.local)$/i.exec(email)?.[1];
+  const team=' FROM users u WHERE NOT EXISTS(SELECT 1 FROM personal_workspaces w WHERE w.user_id=u.id) AND ';
+  const names=handle?db.prepare('SELECT u.username'+team+'u.username=?').all(handle):db.prepare('SELECT u.username'+team+'(u.username=? OR u.display_name=?) LIMIT 2').all(author,author);
+  return {hash:oid?.slice(0,7),oid,author,date,message,username:names.length===1?names[0].username:null};
 }
 export async function describe(repo,userId) {
   const [refs, tagList] = await Promise.all([branches(repo), tags(repo)]);
@@ -145,7 +149,9 @@ export async function describe(repo,userId) {
   const commit=refs.length?await commitInfo(repo,defaultBranch):{author:'',message:'Empty repository',date:repo.created_at,hash:''};
   const prefs=db.prepare('SELECT kind FROM preferences WHERE user_id=? AND repo_id=?').all(userId,repo.id).map(r=>r.kind);
   const b=Object.fromEntries(refs.filter(r=>r.name!=='main').map(r=>[r.name,{oid:r.oid}]));
-  return {...repo,owner:namespace,creator:getUser(repo.creator_id),albumUrl:repo.kind==='album'?'/albums/?repo='+encodeURIComponent(repo.name):null,visibility:'Internal',defaultBranch,empty:!refs.length,branchList:refs,tagList,branches:b,commit,updated:commit.date,language:repo.kind==='album'?'Photos':'Files',tone:'blue',files:[],starred:prefs.includes('star'),watched:prefs.includes('watch'),watchCount:db.prepare("SELECT count(*) AS n FROM preferences WHERE repo_id=? AND kind='watch'").get(repo.id).n,starCount:db.prepare("SELECT count(*) AS n FROM preferences WHERE repo_id=? AND kind='star'").get(repo.id).n};
+  const forkCount=db.prepare("SELECT count(*) n FROM repo_forks f JOIN repos r ON r.id=f.repo_id WHERE f.parent_id=? AND r.status='ready'").get(repo.id).n;
+  const parent=db.prepare('SELECT r.name FROM repo_forks f JOIN repos r ON r.id=f.parent_id WHERE f.repo_id=?').get(repo.id)?.name;
+  return {...repo,forkCount,parent,owner:namespace,creator:getUser(repo.creator_id),albumUrl:repo.kind==='album'?'/albums/?repo='+encodeURIComponent(repo.name):null,visibility:'Internal',defaultBranch,empty:!refs.length,branchList:refs,tagList,branches:b,commit,updated:commit.date,language:repo.kind==='album'?'Photos':'Files',tone:'blue',files:[],starred:prefs.includes('star'),watched:prefs.includes('watch'),watchCount:db.prepare("SELECT count(*) AS n FROM preferences WHERE repo_id=? AND kind='watch'").get(repo.id).n,starCount:db.prepare("SELECT count(*) AS n FROM preferences WHERE repo_id=? AND kind='star'").get(repo.id).n};
 }
 export async function tree(repo,ref,path='') {
   filePath(path,true);

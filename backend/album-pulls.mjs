@@ -1,3 +1,4 @@
+import { deliver } from './collab-store.mjs';
 import { db, now } from './store.mjs';
 import { body, fail, json } from './auth.mjs';
 import { git, ZERO } from './git.mjs';
@@ -205,6 +206,7 @@ export async function albumPullApi(req, res, repo, user, action, params, changed
     return json(res, await uploadPhoto(req, repo, user, params.get('name')), 201);
   if (!route && req.method === 'POST') {
     const pr = await createPull(repo, user, await body(req));
+    deliver(repo,'album',pr.number,pr.title,user,[pr.authorId],pr.description||'');
     changed(repo.name);
     return json(res, pr, 201);
   }
@@ -214,6 +216,7 @@ export async function albumPullApi(req, res, repo, user, action, params, changed
   if (!match[2] && req.method === 'GET') return json(res, (await readPull(repo, user, number)).pr);
   if (match[2] && req.method === 'POST') {
     const pr = await decide(repo, user, number, match[2], await body(req));
+    deliver(repo,'album',pr.number,pr.title,user,[pr.authorId],pr.description||'');
     changed(repo.name);
     return json(res, pr);
   }

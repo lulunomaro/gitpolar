@@ -1,5 +1,8 @@
 # gitpolar · NAS Git 服务
 
+[仓库协作、PR 审核、装配体人工合并与 NAS 自动检查](docs/REPOSITORY-COLLABORATION.md)
+
+
 gitpolar 现在使用真实后端：Git 官方 `git-http-backend` 提供 Smart HTTP，仓库以标准 bare repository 保存；账号、令牌、议题与锁信息使用 SQLite；SolidWorks 等大文件通过 Git LFS 存储。网页会在 Git push 后自动刷新提交、分支和文件。
 
 ## 本机运行

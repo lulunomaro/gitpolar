@@ -14,6 +14,8 @@ const {HttpError,requireAuth,json}=await import('./backend/auth.mjs');
 const {git,smartHttp,installHook}=await import('./backend/git.mjs');
 const {lfs}=await import('./backend/lfs.mjs');
 const {api}=await import('./backend/api.mjs');
+const {startCI,autoRun,needsPushEvents}=await import('./backend/ci.mjs');
+const {branches}=await import('./backend/git.mjs');
 const {beginOAuth,finishOAuth}=await import('./backend/oauth.mjs');
 const {beginFeishu,finishFeishu}=await import('./backend/feishu.mjs');
 const {startWarehouseSync}=await import('./backend/feishu-warehouse.mjs');
@@ -32,7 +34,7 @@ const runtimeBuild = await runtimeFingerprint();
 const events=new EventEmitter();events.setMaxListeners(1000);
 const changed=name=>events.emit('repository',name);
 const assets=new Map([
-  ...['appearance.js','icons.js','shell.js','github-app.js','github.css','workspace-manifest.json'].map(file=>['/ui/'+file,['ui/'+file,file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':'text/javascript; charset=utf-8']]),
+  ...['appearance.js','icons.js','shell.js','github-app.js','collaboration.js','collaboration.css','github.css','workspace-manifest.json'].map(file=>['/ui/'+file,['ui/'+file,file.endsWith('.css')?'text/css; charset=utf-8':file.endsWith('.json')?'application/json; charset=utf-8':'text/javascript; charset=utf-8']]),
   ['/albums',['albums/index.html','text/html; charset=utf-8']],['/albums/',['albums/index.html','text/html; charset=utf-8']],
   ...['ui.js','pulls.js','vendor/serpent-selection.js'].map(file=>['/albums/'+file,['albums/'+file,'text/javascript; charset=utf-8']]),
   ['/albums/vendor/serpent-layout.js',['albums/vendor/serpent-layout.js','text/javascript; charset=utf-8']],
@@ -85,7 +87,11 @@ async function handle(req,res) {
     const write=match[3]==='/git-receive-pack'||url.searchParams.get('service')==='git-receive-pack';
     const user=requireAuth(req,res,write,false,true);
     if(!['/info/refs','/git-upload-pack','/git-receive-pack','/HEAD'].includes(match[3]))throw new HttpError(404,'Unsupported Git endpoint.');
-    return smartHttp(req,res,repo,user,path,url.searchParams.toString(),changed);
+    const tips=write && req.method==='POST' && needsPushEvents(repo)?new Map((await branches(repo)).map(b=>[b.name,b.oid])):null;
+    return smartHttp(req,res,repo,user,path,url.searchParams.toString(),name=>{
+      changed(name);
+      if(tips) branches(repo).then(refs=>Promise.all(refs.filter(b=>tips.get(b.name)!==b.oid).map(b=>autoRun(repo,b.name,b.oid)))).catch(e=>console.error('CI dispatch:',e.message));
+    });
   }
   if(req.method!=='GET')throw new HttpError(405,'Method not allowed.');
   const asset=assets.get(path);if(!asset)throw new HttpError(404,'Not found.');
@@ -106,6 +112,7 @@ server.listen(port,host,()=>{
   console.log(`gitpolar listening on ${host}:${port}. Open ${origin.origin}`);
   console.log(`${version}; Smart HTTP + Git LFS enabled; workspace ${namespace}`);
 });
+startCI(changed);
 const stopWarehouseSync=startWarehouseSync();
 let stopping=false;
 async function shutdown(){if(stopping)return;stopping=true;stopWarehouseSync?.();events.removeAllListeners();server.closeAllConnections();await shutdownFeishuCli();server.close(()=>process.exit(0));}

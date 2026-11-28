@@ -1,3 +1,6 @@
+import { collaborationRoute, repoCollab, globalCollab, updateInbox } from './collaboration.mjs';
+import { nextNumber, deliver, requireManager } from './collab-store.mjs';
+import { autoRun } from './ci.mjs';
 import { interfaceApi } from './interface.mjs';
 import { workbenchApi } from './workbench.mjs';
 import { randomUUID } from 'node:crypto';
@@ -32,6 +35,8 @@ function account(req,res,mutate=false) {
   if(mutate&&!auth.token)requireOrigin(req);return auth.user;
 }
 export async function api(req,res,pathname,params,changed,events) {
+  if(pathname==='/api/inbox' && req.method==='PUT') { const user=account(req,res,true);return json(res,updateInbox(user,await body(req))); }
+  if(pathname==='/api/inbox' || pathname==='/api/pulls') return globalCollab(req,res,pathname);
   if(pathname.startsWith('/api/me/') || pathname.startsWith('/api/profiles/')) return interfaceApi(req,res,pathname,params);
   if(pathname === '/api/workbench' || pathname.startsWith('/api/workbench/')) return workbenchApi(req,res,pathname,params);
   if(pathname.startsWith('/api/feishu-cli/'))return feishuCliApi(req,res,pathname,params);
@@ -44,7 +49,8 @@ export async function api(req,res,pathname,params,changed,events) {
   if(pathname==='/api/session' && req.method==='GET') {
     const auth=authenticate(req,{includePersonal:true}),origin=requestOrigin();
     const team=!auth?.user?.personalOnly;
-    return json(res,{mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,authProvider,setupRequired:!userCount(),feishuLoginUrl:feishuConfigured?new URL('/auth/feishu',origin).href:null,feishuCallbackUrl:new URL('/auth/feishu/callback',origin).href,feishuLinked:Boolean(auth?.user && (auth.user.personalOnly || hasFeishuIdentity(auth.user.id))),callbackUrl:new URL('/auth/github/callback',origin).href,loginUrl:authProvider!=='feishu'&&githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{personalWorkbench:personalWorkspacesEnabled,procurement:team,admin:team,repositoryContext:team,git:team,lfs:team,locks:team,cad:team,preview:team,hydratedArchives:team,history:team,ssh:false,issues:team,pulls:false,firmware:team&&Boolean(process.env.FIRMWARE_GIT_URL)}});
+    const avatars=auth?Object.fromEntries(db.prepare('SELECT u.username,a.version FROM profile_avatars a JOIN users u ON u.id=a.user_id WHERE u.id=? OR (?=1 AND NOT EXISTS(SELECT 1 FROM personal_workspaces w WHERE w.user_id=u.id))').all(auth.user.id,+team).map(v=>[v.username,v.version])):{};
+    return json(res,{avatars,mode:'server',namespace,origin:origin.origin,user:auth?.user?{...auth.user,login:auth.user.username}:null,authProvider,setupRequired:!userCount(),feishuLoginUrl:feishuConfigured?new URL('/auth/feishu',origin).href:null,feishuCallbackUrl:new URL('/auth/feishu/callback',origin).href,feishuLinked:Boolean(auth?.user && (auth.user.personalOnly || hasFeishuIdentity(auth.user.id))),callbackUrl:new URL('/auth/github/callback',origin).href,loginUrl:authProvider!=='feishu'&&githubConfigured?new URL('/auth/github',origin).href:null,capabilities:{personalWorkbench:personalWorkspacesEnabled,procurement:team,admin:team,repositoryContext:team,git:team,lfs:team,locks:team,cad:team,preview:team,hydratedArchives:team,history:team,ssh:false,issues:team,pulls:team,firmware:team&&Boolean(process.env.FIRMWARE_GIT_URL)}});
   }
   if(pathname==='/api/setup' && req.method==='POST') {
     if(authProvider==='feishu')fail(403,'Only Feishu sign-in is enabled.');
@@ -96,7 +102,7 @@ export async function api(req,res,pathname,params,changed,events) {
     if(req.method==='POST') {const repo=await createRepository(user,await body(req));changed(repo.name);return json(res,await describe(repo,user.id),201);}
   }
   if(pathname==='/api/issues' && req.method==='GET') {
-    account(req,res);return json(res,{issues:db.prepare("SELECT i.number AS id,r.name AS repo,'issues' AS kind,i.title,i.body,i.state,u.username AS author,i.created_at AS updated FROM issues i JOIN repos r ON r.id=i.repo_id JOIN users u ON u.id=i.author_id WHERE r.status='ready' ORDER BY i.created_at DESC").all()});
+    account(req,res);return json(res,{issues:db.prepare("SELECT i.number AS id,r.name AS repo,'issues' AS kind,i.title,i.body,i.state,(SELECT json_group_array(l.name) FROM issue_labels x JOIN repo_labels l ON x.label_id=l.id WHERE x.issue_id=i.id) labels,(SELECT json_group_array(a.username) FROM issue_assignees x JOIN users a ON x.user_id=a.id WHERE x.issue_id=i.id) assignees,i.created_at AS createdAt,u.username AS author,i.created_at AS updated FROM issues i JOIN repos r ON r.id=i.repo_id JOIN users u ON u.id=i.author_id WHERE r.status='ready' ORDER BY i.created_at DESC").all().map(i=>({...i,labels:JSON.parse(i.labels),assignees:JSON.parse(i.assignees)}))});
   }
   const match=pathname.match(/^\/api\/repos\/([a-z0-9][a-z0-9_-]{0,47})(?:\/(.*))?$/);
   if(match) {
@@ -110,6 +116,7 @@ export async function api(req,res,pathname,params,changed,events) {
     res.setHeader('X-Gitpolar-Repository-Id',repo.id);
     const action=match[2]||'',ref=params.get('ref')||'main',path=params.get('path')||'';
     if(!action && req.method==='GET')return json(res,await describe(repo,user.id));
+    if(collaborationRoute.test(action)) return repoCollab(req,res,repo,user,action,params,changed);
     if(proposalRoute) return albumPullApi(req,res,repo,user,action,params,changed);
     if(action==='album/stars' && req.method==='GET')return json(res,await visibleAlbumStars(repo,user.id,ref));
     if (starTarget && ['PUT','DELETE'].includes(req.method)) {
@@ -125,7 +132,7 @@ export async function api(req,res,pathname,params,changed,events) {
     if(action==='album/media' && ['GET','HEAD'].includes(req.method))return albumMedia(req,res,repo,params);
     if(action==='context' && req.method==='GET')return json(res,await repositoryContext(repo,user,{...(params.has('ref')?{ref:params.get('ref')}:{}),...(params.has('path')?{path:params.get('path')}:{})}));
     if(!action && req.method==='PATCH') {
-      const value=await body(req);if(typeof value.description!=='string'||value.description.length>240)fail(400,'Invalid repository description.');
+      requireManager(repo,user);const value=await body(req);if(typeof value.description!=='string'||value.description.length>240)fail(400,'Invalid repository description.');
       db.prepare('UPDATE repos SET description=? WHERE id=?').run(value.description,repo.id);changed(repo.name);return json(res,{ok:true});
     }
     if(action==='branches' && req.method==='GET')return json(res,await branchOverview(repo));
@@ -164,12 +171,12 @@ export async function api(req,res,pathname,params,changed,events) {
     }
     if(action==='file' && req.method==='PUT') {
       const values=await body(req);if(typeof values.branch!=='string')fail(400,'Branch is required.');
-      const oid=await commitFiles(repo,user,values.branch,[{path:values.path,text:values.text}],String(values.message||`Update ${values.path}`).slice(0,300),values.expectedHead);changed(repo.name);return json(res,{oid});
+      const oid=await commitFiles(repo,user,values.branch,[{path:values.path,text:values.text}],String(values.message||`Update ${values.path}`).slice(0,300),values.expectedHead);await autoRun(repo,values.branch,oid);changed(repo.name);return json(res,{oid});
     }
     if(action==='issues' && req.method==='POST') {
       const values=await body(req);if(typeof values.title!=='string'||!values.title.trim()||values.title.length>160||typeof values.body!=='string'||values.body.length>6000)fail(400,'Invalid issue title or description.');
-      const number=db.prepare('SELECT coalesce(max(number),0)+1 AS n FROM issues WHERE repo_id=?').get(repo.id).n;
-      db.prepare('INSERT INTO issues(number,repo_id,author_id,title,body,created_at) VALUES(?,?,?,?,?,?)').run(number,repo.id,user.id,values.title.trim(),values.body,now());changed(repo.name);return json(res,{number},201);
+      const number=nextNumber(repo);
+      db.prepare('INSERT INTO issues(number,repo_id,author_id,title,body,created_at) VALUES(?,?,?,?,?,?)').run(number,repo.id,user.id,values.title.trim(),values.body,now());deliver(repo,'issues',number,values.title.trim(),user,[],values.body);changed(repo.name);return json(res,{number},201);
     }
     if(action==='locks' && req.method==='POST') {
       const values=await body(req);

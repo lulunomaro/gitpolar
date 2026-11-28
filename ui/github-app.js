@@ -22,9 +22,9 @@
   }
   function repoActor(c,r) {
     const author = r.empty ? (r.creator?.name || r.creator?.username || r.owner) : (r.commit?.author || r.owner);
-    const known = r.creator && (r.empty || [r.creator.username,r.creator.name].includes(author));
+    const known = r.empty?r.creator?.username:r.commit?.username;
     const body = `${c.avatar(author,'large')}<strong>${c.escape(author)}</strong>`;
-    return known ? `<a class="gh-actor" href="${profileHref(c,'',r.creator.username)}">${body}</a>` : `<span class="gh-actor">${body}</span>`;
+    return known ? `<a class="gh-actor" href="${profileHref(c,'',known)}">${body}</a>` : `<span class="gh-actor">${body}</span>`;
   }
   function extraLinks(c) {
     if (!canTeam(c)) return '';
@@ -52,11 +52,12 @@
   function albumPulls(c) {
     if (!c.onServer || !canTeam(c)) return [];
     const albums = c.repos.filter((r) => r.kind === 'album');
-    return albums.flatMap((repo) => {
+    return [...(c.codePulls||[]),...albums.flatMap((repo) => {
       const result = loadCached(c, repo.name, 'repos/' + repo.name + '/album/pulls', requestCache);
-      return (result.data?.pulls || []).map((p) => ({ ...p, repo: repo.name }));
-    });
+      return (result.data?.pulls || []).map((p) => ({ ...p, album:true, repo: repo.name }));
+    })];
   }
+  const pullHref = (c,p) => p.album ? `/albums/?repo=${encodeURIComponent(p.repo)}&pull=${p.number}#/pulls` : c.repoHref(p.repo,'pulls')+'/'+p.number;
   function dashboard(c) {
     current = c;
     const followingView = new URLSearchParams(location.hash.split('?')[1]).get('feed') === 'following';
@@ -72,7 +73,7 @@
       open = requests.filter((p) => p.state === 'open');
     const feedItems = [];
     if (feed === 'all' || feed === 'repos')
-      for (const r of all.filter((r) => !followingView || followed.has(r.creator?.username)))
+      for (const r of all.filter((r) => !followingView || followed.has(r.empty?r.creator?.username:r.commit?.username) || followed.has(r.creator?.username)))
         feedItems.push({
           date: r.updatedAt || '',
           html: `<article class="gh-feed-card"><header>${repoActor(c,r)}<span>${r.empty ? 'created a repository' : 'pushed to'} <a href="${c.repoHref(r.name)}">${c.escape(r.owner)}/${c.escape(r.name)}</a></span><small>${c.escape(r.updated)}</small></header>${panel(`<div class="gh-feed-title"><a href="${c.repoHref(r.name)}">${c.icon('repo')}${c.escape(r.owner)} / <strong>${c.escape(r.name)}</strong></a>${c.starButton(r)}</div><p>${c.escape(r.description || '')}</p>${r.empty ? '<p class="muted">No commits yet</p>' : `<div class="gh-commit-line">${c.icon('git-commit')}<a href="${c.repoHref(r.name, 'graph')}">${c.escape(r.commit?.message || '')}</a><code>${c.escape(r.commit?.hash || '')}</code></div>`}<footer><span>${c.icon('git-branch')}${c.escape(r.defaultBranch || 'main')}</span><span>${c.icon('star')} ${r.starCount || 0}</span>${r.kind === 'album' ? `<a href="/albums/?repo=${encodeURIComponent(r.name)}">打开相册 →</a>` : ''}</footer>`)}</article>`,
@@ -87,7 +88,7 @@
       for (const p of requests.filter((p) => !followingView || followed.has(p.author)).slice(0, 15))
         feedItems.push({
           date: p.createdAt,
-          html: `<article class="gh-feed-card"><header>${c.avatar(p.author, 'large')}<strong>${c.escape(p.author)}</strong><span>${p.state === 'merged' ? 'merged' : 'opened'} a pull request</span><small>${p.createdAt.slice(0, 10)}</small></header>${panel(`<div class="gh-feed-title"><a href="/albums/?repo=${encodeURIComponent(p.repo)}#/pulls">${c.icon('git-pull-request')} ${c.escape(p.title)} #${p.number}</a><span class="label">${c.escape(p.state)}</span></div><p>${c.escape(p.repo)} · ${p.added} 张新照片 · ${p.edited} 张整理</p>`)}</article>`,
+          html: `<article class="gh-feed-card"><header>${c.avatar(p.author, 'large')}<strong>${c.escape(p.author)}</strong><span>opened a pull request</span><small>${p.createdAt.slice(0, 10)}</small></header>${panel(`<div class="gh-feed-title"><a href="${pullHref(c,p)}">${c.icon('git-pull-request')} ${c.escape(p.title)} #${p.number}</a><span class="label">${c.escape(p.state)}</span></div><p>${c.escape(p.repo)} · ${p.album?`${p.added} 张新照片 · ${p.edited} 张整理`:`${c.escape(p.head)} → ${c.escape(p.base)}`}</p>`)}</article>`,
         });
     feedItems.sort((a, b) => b.date.localeCompare(a.date));
     return `<div class="gh-dashboard"><aside class="gh-dashboard-sidebar"><a class="gh-sidebar-account" href="${profileHref(c)}">${c.avatar(user.username, 'large')}<strong>${c.escape(user.username)}</strong>${c.icon('chevron-down')}</a><div class="section-head"><h2>Top repositories</h2>${canTeam(c) && user.role !== 'reader' ? `<button class="button primary small" data-action="new-repo">${c.icon('repo')}New</button>` : ''}</div><label class="gh-side-search"><input id="gh-side-search" class="form-input" type="search" placeholder="Find a repository…" aria-label="Find a repository"></label><div id="gh-side-repos">${
@@ -113,7 +114,7 @@
             `<li><time>${c.escape(r.updated)}</time><a href="${c.repoHref(r.name, 'graph')}">${c.escape(r.commit?.message || r.name)}</a><small>${c.escape(r.name)}</small></li>`
         )
         .join('') || '<li>No changes yet</li>'
-    }</ul></section><section class="gh-right-box"><h2>Your workspace</h2><div class="gh-workspace-counts"><a href="#/repos"><strong>${c.repos.length}</strong> repositories</a><a href="#/issues"><strong>${c.tickets.filter((t) => t.state === 'open').length}</strong> open issues</a><a href="#/pulls"><strong>${open.length}</strong> album pull requests</a></div><nav class="gh-app-links">${extraLinks(c)}</nav></section><section class="gh-right-box"><h2>Explore repositories</h2>${all
+    }</ul></section><section class="gh-right-box"><h2>Your workspace</h2><div class="gh-workspace-counts"><a href="#/repos"><strong>${c.repos.length}</strong> repositories</a><a href="#/issues"><strong>${c.tickets.filter((t) => t.state === 'open').length}</strong> open issues</a><a href="#/pulls"><strong>${open.length}</strong> pull requests</a></div><nav class="gh-app-links">${extraLinks(c)}</nav></section><section class="gh-right-box"><h2>Explore repositories</h2>${all.filter(r=>!r.starred && r.creator_id!==user.id).sort((a,b)=>(b.starCount||0)-(a.starCount||0))
       .slice(0, 3)
       .map(
         (r) =>
@@ -122,13 +123,9 @@
       .join('')}</section></aside></div>`;
   }
   function graph(c, p) {
-    const year = Number(p.year),
-      today = new Date(),
-      last =
-        year === today.getFullYear()
-          ? new Date(Date.UTC(year, today.getMonth(), today.getDate()))
-          : new Date(Date.UTC(year, 11, 31));
-    const start = new Date(Date.UTC(year, 0, 1));
+    const year=Number(p.year),today=new Date();
+    const last=new Date((p.last||year+'-12-31')+'T00:00:00Z');
+    const first=new Date((p.first||year+'-01-01')+'T00:00:00Z'),start=new Date(first);
     start.setUTCDate(start.getUTCDate() - start.getUTCDay());
     const end = new Date(last);
     end.setUTCDate(end.getUTCDate() + 6 - end.getUTCDay());
@@ -138,28 +135,10 @@
         n = p.days[day] || 0,
         level = n === 0 ? 0 : n < 3 ? 1 : n < 6 ? 2 : n < 10 ? 3 : 4;
       cells.push(
-        `<span role="img" aria-label="${n} contributions on ${day}" title="${n} contributions on ${day}" class="gh-day level-${level}${date.getUTCFullYear() !== year ? ' outside' : ''}"></span>`
+        `<span role="img" aria-label="${n} contributions on ${day}" title="${n} contributions on ${day}" class="gh-day level-${level}${date < first || date > last ? ' outside' : ''}"></span>`
       );
     }
-    return `<section class="gh-contributions"><div class="section-head"><h2>${p.total} contributions in ${p.year}</h2><label class="gh-year-picker">Year<select id="gh-contribution-year" aria-label="Contribution year">${Array.from(new Set([year, ...Array.from({length: 5}, (_, i) => today.getFullYear() - i)])).sort((a,b) => b-a).map((y) => `<option value="${y}"${y === year ? ' selected' : ''}>${y}</option>`).join('')}</select></label></div><div class="gh-contribution-box"><div class="gh-calendar-scroll"><div class="gh-calendar-months">${[
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ]
-      .slice(0, year === today.getFullYear() ? today.getMonth() + 1 : 12)
-      .map((m) => `<span>${m}</span>`)
-      .join(
-        ''
-      )}</div><div class="gh-calendar"><div class="gh-weekdays"><span>Mon</span><span>Wed</span><span>Fri</span></div><div class="gh-heatmap">${cells.join('')}</div></div></div><div class="gh-calendar-key"><span>Git commits and issues</span><span>Less ${[0, 1, 2, 3, 4].map((l) => `<i class="gh-day level-${l}"></i>`).join('')} More</span></div></div></section>`;
+    return `<section class="gh-contributions"><div class="section-head"><h2>${p.total} contributions ${p.trailing?'in the last year':'in '+p.year}</h2><label class="gh-year-picker">Year<select id="gh-contribution-year" aria-label="Contribution year"><option value="" ${p.trailing?'selected':''}>Last year</option>${Array.from(new Set([year, ...(p.years||[]), ...Array.from({length: 5}, (_, i) => today.getFullYear() - i)])).sort((a,b) => b-a).map((y) => `<option value="${y}"${!p.trailing && y === year ? ' selected' : ''}>${y}</option>`).join('')}</select></label></div><div class="gh-contribution-box"><div class="gh-calendar-scroll"><div class="gh-calendar-months">${Array.from({length:(last.getUTCFullYear()-first.getUTCFullYear())*12+last.getUTCMonth()-first.getUTCMonth()+1},(_,i)=>new Date(Date.UTC(first.getUTCFullYear(),first.getUTCMonth()+i,1)).toLocaleString('en',{month:'short',timeZone:'UTC'})).map(m=>`<span>${m}</span>`).join('')}</div><div class="gh-calendar"><div class="gh-weekdays"><span>Mon</span><span>Wed</span><span>Fri</span></div><div class="gh-heatmap">${cells.join('')}</div></div></div><div class="gh-calendar-key"><span>Git commits, issues and pull requests</span><span>Less ${[0, 1, 2, 3, 4].map((l) => `<i class="gh-day level-${l}"></i>`).join('')} More</span></div></div></section>`;
   }
   function demoProfile(c, username) {
     return {
@@ -197,6 +176,7 @@
       ['overview', 'book', 'Overview', null],
       ['repositories', 'repo', 'Repositories', p.repositories.length],
       ['projects', 'project', 'Projects', null],
+      ['packages','repo','Packages',p.packages?.length||null],
       ['stars', 'star', 'Stars', p.starred.length],
     ];
     const profileRepos = c.repos.filter((r) => p.repositories.includes(r.name)),
@@ -205,8 +185,10 @@
     if (tab === 'repositories' || tab === 'stars') {
       const items = tab === 'repositories' ? profileRepos : stars;
       content = `<div class="gh-profile-repo-filters"><input class="form-input" id="gh-profile-repo-search" type="search" placeholder="Find a repository…" aria-label="Find a repository in profile">${p.own && tab === 'repositories' ? `<button class="button primary" data-action="new-repo">${c.icon('repo')}New</button>` : ''}</div><div id="gh-profile-repos">${items.length ? items.map((r) => `<article class="gh-profile-repo"><div><h2><a href="${c.repoHref(r.name)}">${c.escape(r.name)}</a><span class="label">Internal</span></h2><p>${c.escape(r.description || '')}</p><small>${c.escape(r.language || 'Files')} · ${c.icon('star')} ${r.starCount || 0} · Updated ${c.escape(r.updated)}</small></div>${c.starButton(r)}</article>`).join('') : empty(c, tab === 'stars' ? 'No starred repositories yet' : 'No repositories yet', 'Repositories will be listed here.')}</div>`;
-    } else if (tab === 'projects')
-      content = `<h2 class="gh-content-title">Projects</h2><div class="gh-pinned-grid">${canTeam(c) ? panel(`<header class="gh-feed-title">${c.icon('project')}<a href="/procurement/">采购与库存</a></header><p>申请、组长审批、采购、到货确认与入库。</p>`) : ''}${panel(`<header class="gh-feed-title">${c.icon('file')}<a href="#/files">个人文件</a></header><p>管理自己的代码、图纸和文件夹。</p>`)}</div>`;
+    } else if (tab==='projects' || tab==='packages') {
+      const records=tab==='projects'?p.projects||[]:p.packages||[];
+      content=records.map(item=>panel(`<a href="${c.repoHref(item.repo,tab)}">${c.escape(item.title||item.name)}</a><p>${c.escape(item.repo)} ${c.escape(item.version||'')}</p>`)).join('')||empty(c,'No '+tab+' yet','');
+    }
     else if (['followers', 'following'].includes(tab)) {
       const members = loadCached(
         c,
@@ -223,7 +205,7 @@
               .slice(0, 10)
               .map(
                 (event) =>
-                  `<article>${c.icon(event.type === 'commit' ? 'git-commit' : 'issue-opened')}<div><p><a href="${c.repoHref(event.repo, event.type === 'commit' ? 'graph' : 'issues')}${event.type === 'issue' ? '/' + event.number : ''}">${c.escape(event.message)}</a></p><small>${c.escape(event.repo)} · ${event.date}</small></div></article>`
+                  `<article>${c.icon(event.type === 'commit' ? 'git-commit' : 'issue-opened')}<div><p><a href="${event.type==='album'?'/albums/?repo='+encodeURIComponent(event.repo)+'&pull='+event.number+'#/pulls':c.repoHref(event.repo,event.type==='commit'?'graph':event.type==='pull'?'pulls':'issues')+(event.type==='commit'?'':'/'+event.number)}">${c.escape(event.message)}</a></p><small>${c.escape(event.repo)} · ${event.date}</small></div></article>`
               )
               .join('')
           : panel(
@@ -282,7 +264,7 @@
       )
       .join(
         ''
-      )}<p class="gh-form-note">飞书账号：${c.escape(p.username)}。资料更新后会显示在个人主页。</p><button class="button primary" type="submit">Update profile</button><p id="gh-setting-feedback" role="status"></p></form><div class="gh-settings-avatar"><h2>Profile picture</h2>${c.avatar(username)}<small>gitpolar identicon</small></div></div>`;
+      )}<p class="gh-form-note">飞书账号：${c.escape(p.username)}。资料更新后会显示在个人主页。</p><button class="button primary" type="submit">Update profile</button><p id="gh-setting-feedback" role="status"></p></form><div class="gh-settings-avatar"><h2>Profile picture</h2>${c.avatar(username)}${c.onServer?'<label class="field">Upload photo<input id="gh-avatar-upload" type="file" accept="image/png,image/jpeg,image/webp"></label><button class="button" id="gh-avatar-reset">Reset avatar</button>':''}</div></div>`;
   }
   function settings(c, section = 'profile') {
     current = c;
@@ -299,7 +281,7 @@
           ? profileSettings(c)
           : section === 'tokens'
             ? `<h1 class="gh-settings-title">Personal access tokens</h1><p class="gh-settings-description">Git 和 Git LFS 使用个人访问令牌。</p><button class="button" data-action="access-tokens">Manage access tokens</button>`
-            : `<h1 class="gh-settings-title">Notifications</h1><p class="gh-settings-description">查看议题和相册投稿中需要处理的内容。</p><a class="button" href="#/issues">Issues</a> <a class="button" href="#/pulls">Pull requests</a>`;
+            : c.onServer && canTeam(c)?window.GitpolarCollab.inbox(c,true):`<h1 class="gh-settings-title">Notifications</h1><p class="gh-settings-description">查看议题和相册投稿中需要处理的内容。</p><a class="button" href="#/issues">Issues</a> <a class="button" href="#/pulls">Pull requests</a>`;
     return `<div class="gh-settings-wrap"><header class="gh-settings-head">${c.avatar(c.session?.user?.username || 'polar-lab', 'large')}<div><strong>${c.escape(c.session?.user?.name || c.session?.user?.username || 'polar-lab')}</strong><span>Your personal account</span></div><a class="button" href="${profileHref(c)}">Go to your personal profile</a></header><div class="gh-settings-layout"><aside><nav>${options.map(([key, sym, label]) => `<a href="#/settings/${key}" ${section === key ? 'aria-current="page"' : ''}>${c.icon(sym)}${label}</a>`).join('')}</nav><div class="gh-settings-links">${extraLinks(c)}</div></aside><main>${content}</main></div></div>`;
   }
   function listQuery(kind, repoName = '') {
@@ -308,38 +290,38 @@
     const parts = q.trim().split(/\s+/).filter(Boolean);
     const state = parts.find((t) => /^(state|is):(open|closed|merged)$/.test(t))?.split(':')[1] || '';
     const author = parts.find((t) => t.startsWith('author:'))?.slice(7);
+    const assignee=parts.find(t=>t.startsWith('assignee:'))?.slice(9),label=parts.find(t=>t.startsWith('label:'))?.slice(6);
     const sort = parts.find((t) => t.startsWith('sort:'))?.slice(5) || 'created-desc';
-    const terms = parts.filter((t) => !/^(is|state|author|sort|created):/.test(t)).map((t) => t.toLowerCase());
+    const terms = parts.filter((t) => !/^(is|state|author|assignee|label|sort|created):/.test(t)).map((t) => t.toLowerCase());
     const href = repoName ? '#/repos/' + encodeURIComponent(repoName) + '/' + kind : '#/' + kind;
     const link = (token, value) => {
       const next = parts.filter((t) => !t.startsWith(token + ':') && !(token === 'state' && /^is:(open|closed|merged)$/.test(t)));
       if (value) next.push(token + ':' + value);
       return href + '?' + new URLSearchParams({q:next.join(' '),...(params.get('density') === 'compact' ? {density:'compact'} : {})});
     };
-    return {q, state, author, sort, terms, href, link, compact:params.get('density') === 'compact', recent:parts.includes('created:>week')};
+    return {q, state, author, assignee, label, sort, terms, href, link, compact:params.get('density') === 'compact', recent:parts.includes('created:>week')};
   }
   function issuePage(c, repoName = '') {
     current = c;
     const query = listQuery('issues', repoName), me = c.session?.user?.username;
     const items = c.tickets.filter((t) => t.kind === 'issues' && (!repoName || t.repo === repoName));
     const author = query.author === '@me' ? me : query.author;
-    const filtered = items.filter((t) => (!query.state || t.state === query.state) && (!author || t.author === author) && (!query.recent || new Date(t.createdAt || t.updatedAt) >= Date.now() - 7*86400000) && query.terms.every((word) => `${t.title} #${t.id} ${t.repo}`.toLowerCase().includes(word)));
+    const filtered = items.filter((t) => (!query.state || t.state === query.state) && (!author || t.author === author) && (!query.assignee || t.assignees?.includes(query.assignee==='@me'?me:query.assignee)) && (!query.label || t.labels?.some(l=>l.toLowerCase()===query.label.toLowerCase())) && (!query.recent || new Date(t.createdAt || t.updatedAt) >= Date.now() - 7*86400000) && query.terms.every((word) => `${t.title} #${t.id} ${t.repo}`.toLowerCase().includes(word)));
     filtered.sort((a,b) => (a.updatedAt || '').localeCompare(b.updatedAt || '') * (query.sort === 'created-asc' ? 1 : -1));
     const count = (state) => items.filter((t) => t.state === state).length;
     const authors = Array.from(new Set(items.map((t) => t.author))).sort();
     const authorMenu = `<details class="gh-list-filter"><summary>Author ${c.icon('chevron-down',12)}</summary><nav aria-label="Filter by author"><a href="${c.escape(query.link('author',''))}">Anyone</a>${authors.map((name) => `<a href="${c.escape(query.link('author',name))}">${c.avatar(name,'small')}${c.escape(name)}</a>`).join('')}</nav></details>`;
     const created = query.href + '?' + new URLSearchParams({q:'is:issue state:open author:@me'});
     const recent = query.href + '?' + new URLSearchParams({q:'is:issue created:>week sort:created-desc'});
-    return `<div class="gh-issues-layout"><aside class="gh-issue-sidebar"><nav aria-label="Issue filters"><a href="${query.href}" ${!query.author && !query.recent ? 'aria-current="page"' : ''}>${c.icon('issue-opened')}Issues</a><a href="${created}" ${query.author === '@me' ? 'aria-current="page"' : ''}>${c.icon('person')}Created by me</a><a href="${recent}" ${query.recent ? 'aria-current="page"' : ''}>${c.icon('history')}Recent activity</a></nav>${repoName ? `<hr><nav>${[['projects','project','Projects'],['wiki','book','Documentation']].map(([key,icon,label]) => `<a href="${c.repoHref(repoName,key)}">${c.icon(icon)}${label}</a>`).join('')}</nav>` : ''}</aside><section class="gh-issues-main"><header class="gh-feed-head"><h1>Issues</h1>${c.repos.length && c.session?.user?.role !== 'reader' ? `<button class="button primary" data-action="new-issue" data-repo="${c.escape(repoName)}">New issue</button>` : ''}</header><form id="gh-list-search" class="gh-list-search" data-href="${query.href}"><input class="form-input" type="search" name="q" aria-label="Search issues" value="${c.escape(query.q)}"><button class="button" type="submit" aria-label="Search issues">${c.icon('search')}</button></form><section class="gh-box${query.compact?' gh-compact-list':''}"><header class="gh-list-controls"><nav aria-label="Filter issues by state"><a href="${c.escape(query.link('state','open'))}" ${query.state === 'open' ? 'aria-current="page"' : ''}>Open <span class="count">${count('open')}</span></a><a href="${c.escape(query.link('state','closed'))}" ${query.state === 'closed' ? 'aria-current="page"' : ''}>Closed <span class="count">${count('closed')}</span></a></nav><div>${authorMenu}<label class="gh-list-sort">Sort<select id="gh-list-sort" aria-label="Sort issues"><option value="created-desc"${query.sort!=='created-asc'?' selected':''}>Newest</option><option value="created-asc"${query.sort==='created-asc'?' selected':''}>Oldest</option></select></label><a class="gh-density" aria-label="${query.compact?'Comfortable':'Compact'} display density" href="${c.escape(query.href+'?'+new URLSearchParams({q:query.q,density:query.compact?'comfortable':'compact'}))}">${c.icon('three-bars')}</a></div></header><ul class="list gh-issue-list" aria-label="Issues">${filtered.map((t) => `<li><span class="gh-issue-symbol ${t.state}">${c.icon(t.state==='closed'?'issue-closed':'issue-opened',16)}</span><div><h2><a href="${c.repoHref(t.repo,'issues')}/${t.id}">${c.escape(t.title)}</a></h2><p>${repoName?'':c.escape(t.repo)}#${t.id} · <a href="${profileHref(c,'',t.author)}">${c.escape(t.author)}</a> opened ${c.escape(t.updated)}</p></div></li>`).join('') || `<li class="gh-list-empty">${empty(c,'No results','Try changing the search or state filter.','issue-opened')}</li>`}</ul></section></section></div>`;
+    return `<div class="gh-issues-layout"><aside class="gh-issue-sidebar"><nav aria-label="Issue filters"><a href="${query.href}" ${!query.author && !query.recent ? 'aria-current="page"' : ''}>${c.icon('issue-opened')}Issues</a><a href="${created}" ${query.author === '@me' ? 'aria-current="page"' : ''}>${c.icon('person')}Created by me</a><a href="${query.href}?q=is%3Aissue%20state%3Aopen%20assignee%3A%40me">Assigned to me</a><a href="${recent}" ${query.recent ? 'aria-current="page"' : ''}>${c.icon('history')}Recent activity</a></nav>${repoName ? `<hr><nav>${[['projects','project','Projects'],['wiki','book','Documentation']].map(([key,icon,label]) => `<a href="${c.repoHref(repoName,key)}">${c.icon(icon)}${label}</a>`).join('')}</nav>` : ''}</aside><section class="gh-issues-main"><header class="gh-feed-head"><h1>Issues</h1>${c.repos.length && c.session?.user?.role !== 'reader' ? `<button class="button primary" data-action="new-issue" data-repo="${c.escape(repoName)}">New issue</button>` : ''}</header><form id="gh-list-search" class="gh-list-search" data-href="${query.href}"><input class="form-input" type="search" name="q" aria-label="Search issues" value="${c.escape(query.q)}"><button class="button" type="submit" aria-label="Search issues">${c.icon('search')}</button></form><section class="gh-box${query.compact?' gh-compact-list':''}"><header class="gh-list-controls"><nav aria-label="Filter issues by state"><a href="${c.escape(query.link('state','open'))}" ${query.state === 'open' ? 'aria-current="page"' : ''}>Open <span class="count">${count('open')}</span></a><a href="${c.escape(query.link('state','closed'))}" ${query.state === 'closed' ? 'aria-current="page"' : ''}>Closed <span class="count">${count('closed')}</span></a></nav><div>${authorMenu}<label class="gh-list-sort">Sort<select id="gh-list-sort" aria-label="Sort issues"><option value="created-desc"${query.sort!=='created-asc'?' selected':''}>Newest</option><option value="created-asc"${query.sort==='created-asc'?' selected':''}>Oldest</option></select></label><a class="gh-density" aria-label="${query.compact?'Comfortable':'Compact'} display density" href="${c.escape(query.href+'?'+new URLSearchParams({q:query.q,density:query.compact?'comfortable':'compact'}))}">${c.icon('three-bars')}</a></div></header><ul class="list gh-issue-list" aria-label="Issues">${filtered.map((t) => `<li><span class="gh-issue-symbol ${t.state}">${c.icon(t.state==='closed'?'issue-closed':'issue-opened',16)}</span><div><h2><a href="${c.repoHref(t.repo,'issues')}/${t.id}">${c.escape(t.title)}</a> ${(t.labels||[]).map(l=>`<a class="label" href="${c.escape(query.link('label',l))}">${c.escape(l)}</a>`).join(' ')}</h2><p>${repoName?'':c.escape(t.repo)}#${t.id} · <a href="${profileHref(c,'',t.author)}">${c.escape(t.author)}</a> opened ${c.escape(t.updated)}</p></div></li>`).join('') || `<li class="gh-list-empty">${empty(c,'No results','Try changing the search or state filter.','issue-opened')}</li>`}</ul></section></section></div>`;
   }
   function pullPage(c, repoName = '') {
     current = c;
     const repo = c.repos.find((r) => r.name === repoName);
-    if (repo && repo.kind !== 'album') return `<div class="gh-pulls-page"><header class="gh-feed-head"><h1>Pull requests</h1><a class="button" href="${c.repoHref(repoName,'compare')}">Compare branches</a></header>${panel(empty(c,'Compare your branches','当前可以比较分支和 CAD 版本；普通代码 PR 的讨论及合并审核尚未接入。','git-pull-request'))}</div>`;
     const requests = albumPulls(c).filter((p) => !repoName || p.repo === repoName), query = listQuery('pulls',repoName);
     const author = query.author === '@me' ? c.session?.user?.username : query.author;
     const filtered = requests.filter((p) => (!query.state || (query.state === 'closed' ? p.state !== 'open' : p.state === query.state)) && (!author || p.author === author) && query.terms.every((word) => `${p.title} ${p.repo} #${p.number}`.toLowerCase().includes(word)));
-    return `<div class="gh-pulls-page"><header class="gh-feed-head"><h1>Pull requests</h1><a class="button primary" href="/albums/${repoName?'?repo='+encodeURIComponent(repoName):''}#/pulls">相册投稿</a></header><form id="gh-list-search" class="gh-list-search" data-href="${query.href}"><input class="form-input" type="search" name="q" aria-label="Search pull requests" value="${c.escape(query.q)}"><button class="button" type="submit" aria-label="Search pull requests">${c.icon('search')}</button></form>${panel(`<header class="gh-list-controls"><nav aria-label="Filter pull requests by state"><a href="${c.escape(query.link('state','open'))}" ${query.state==='open'?'aria-current="page"':''}>${c.icon('git-pull-request')} ${requests.filter((p) => p.state === 'open').length} Open</a><a href="${c.escape(query.link('state','closed'))}" ${query.state==='closed'?'aria-current="page"':''}>${requests.filter((p) => p.state !== 'open').length} Closed</a></nav></header>${filtered.length ? filtered.map((p) => `<a class="gh-pull-row" href="/albums/?repo=${encodeURIComponent(p.repo)}&pull=${p.number}#/pulls"><span class="gh-pull-symbol ${p.state}">${c.icon(p.state==='merged'?'git-merge':'git-pull-request',20)}</span><span><strong>${c.escape(p.title)}</strong><small>${c.escape(p.repo)} #${p.number} · ${c.escape(p.author)} · ${p.createdAt.slice(0,10)}</small></span><span class="label">${c.escape(p.state)}</span></a>`).join('') : empty(c,'No pull requests match your search','队员提交相册 PR 后，可在这里筛选并打开投稿。','git-pull-request')}`)}</div>`;
+    return `<div class="gh-pulls-page"><header class="gh-feed-head"><h1>Pull requests</h1>${repo?.kind==='album'?`<a class="button primary" href="/albums/?repo=${encodeURIComponent(repoName)}#/pulls">相册投稿</a>`:c.session?.user?.role!=='reader'?repo?`<a class="button primary" href="${c.repoHref(repo.name,'pulls')}/new">New pull request</a>`:`<details class="gh-list-filter"><summary class="button primary">New pull request</summary><nav>${c.repos.map(r=>`<a href="${r.kind==='album'?'/albums/?repo='+encodeURIComponent(r.name)+'#/pulls':c.repoHref(r.name,'pulls')+'/new'}">${c.escape(r.name)}</a>`).join('')}</nav></details>`:''}</header><form id="gh-list-search" class="gh-list-search" data-href="${query.href}"><input class="form-input" type="search" name="q" aria-label="Search pull requests" value="${c.escape(query.q)}"><button class="button" type="submit" aria-label="Search pull requests">${c.icon('search')}</button></form>${panel(`<header class="gh-list-controls"><nav aria-label="Filter pull requests by state"><a href="${c.escape(query.link('state','open'))}" ${query.state==='open'?'aria-current="page"':''}>${c.icon('git-pull-request')} ${requests.filter((p) => p.state === 'open').length} Open</a><a href="${c.escape(query.link('state','closed'))}" ${query.state==='closed'?'aria-current="page"':''}>${requests.filter((p) => p.state !== 'open').length} Closed</a></nav></header>${filtered.length ? filtered.map((p) => `<a class="gh-pull-row" href="${pullHref(c,p)}"><span class="gh-pull-symbol ${p.state}">${c.icon(p.state==='merged'?'git-merge':'git-pull-request',20)}</span><span><strong>${c.escape(p.title)}</strong><small>${c.escape(p.repo)} #${p.number} · ${c.escape(p.author)} · ${p.createdAt.slice(0,10)}</small></span><span class="label">${c.escape(p.state)}</span></a>`).join('') : empty(c,'No pull requests match your search','提交的分支变更和相册投稿会显示在这里。','git-pull-request')}`)}</div>`;
   }
   function repositoryOverview(c, repo, tab) {
     current = c;
@@ -351,16 +333,8 @@
     const files = result.data.files;
     const fileLink = (path) => c.repoHref(repo.name,'code',ref,path);
     if (tab === 'wiki') return `<header class="page-head"><h1>Documentation</h1></header>${panel(`<div class="markdown"><h2>${c.escape(repo.name)}</h2><p>${c.escape(repo.description)}</p><ul>${files.filter((f) => /\.md$/i.test(f.path)).map((f) => `<li><a href="${c.escape(fileLink(f.path))}">${c.escape(f.path)}</a></li>`).join('') || '<li>No Markdown documents have been committed.</li>'}</ul></div>`)}`;
-    if (tab === 'actions') {
-      const workflows = files.filter((f) => /^\.github\/workflows\/[^/]+\.ya?ml$/i.test(f.path));
-      return `<header class="page-head"><h1>Actions</h1></header><section class="gh-feature-state">${c.icon('play',40)}<h2>Automate your workflow</h2><p>这个 NAS 尚未连接 Actions runner，工作流不会在这里执行。</p><a class="button" href="${c.repoHref(repo.name)}">Browse repository</a></section>${workflows.length ? `<section class="panel markdown"><h2>Workflow files</h2><ul>${workflows.map((f) => `<li><a href="${c.escape(fileLink(f.path))}">${c.escape(f.path)}</a></li>`).join('')}</ul></section>` : ''}`;
-    }
-    if (tab === 'security') {
-      const policy = files.find((f) => /^(?:\.github\/|docs\/)?SECURITY\.md$/i.test(f.path));
-      return `<header class="page-head"><h1>Security and quality</h1></header><div class="panel"><div class="workflow-row">${c.icon('shield')}<div><strong>Security policy</strong><small>${policy ? `<a href="${c.escape(fileLink(policy.path))}">View ${c.escape(policy.path)}</a>` : 'No security policy has been added.'}</small></div></div><div class="workflow-row">${c.icon('lock')}<div><strong>Private vulnerability reporting</strong><small>Not enabled on this NAS</small></div></div><div class="workflow-row">${c.icon('code-square')}<div><strong>Code scanning</strong><small>No scanning service is connected</small></div></div></div>`;
-    }
     const issues = c.tickets.filter((t) => t.repo === repo.name);
-    return `<header class="page-head"><h1>Pulse</h1></header><div class="insight-grid">${[['Open issues',issues.filter((t) => t.state==='open').length],['Closed issues',issues.filter((t) => t.state==='closed').length],['Files',files.length],['Branches',repo.branchList.length]].map(([title,n]) => `<div class="panel insight-card"><span class="muted">${title}</span><strong>${n}</strong></div>`).join('')}</div><section class="panel markdown"><h2>Latest activity</h2><p><a href="${c.repoHref(repo.name,'graph')}">${c.escape(repo.commit.message)}</a></p><p>${c.escape(repo.commit.author)} · ${c.escape(repo.updated)}</p><a class="button" href="${c.repoHref(repo.name,'graph')}">View Git Graph</a></section>`;
+    return `<header class="page-head"><h1>Pulse</h1></header><div class="insight-grid">${[['Merged pull requests',albumPulls(c).filter(p=>p.repo===repo.name&&p.state==='merged').length],['Open issues',issues.filter((t) => t.state==='open').length],['Closed issues',issues.filter((t) => t.state==='closed').length],['Files',files.length],['Branches',repo.branchList.length]].map(([title,n]) => `<div class="panel insight-card"><span class="muted">${title}</span><strong>${n}</strong></div>`).join('')}</div><section class="panel markdown"><h2>Latest activity</h2><p><a href="${c.repoHref(repo.name,'graph')}">${c.escape(repo.commit.message)}</a></p><p>${c.escape(repo.commit.author)} · ${c.escape(repo.updated)}</p><a class="button" href="${c.repoHref(repo.name,'graph')}">View Git Graph</a></section>`;
   }
   function files(c) {
     current = c;
@@ -455,7 +429,7 @@
     if (e.target.id === 'gh-contribution-year') {
       const path = location.hash.split('?')[0];
       const query = new URLSearchParams(location.hash.split('?')[1]);
-      query.set('year', e.target.value);
+      if(e.target.value)query.set('year',e.target.value);else query.delete('year');
       location.hash = path + '?' + query;
     }
     if (e.target.id === 'gh-feed-filter' && current) {
@@ -463,6 +437,16 @@
       current.rerender();
     }
   });
+  document.addEventListener('change',async e=>{
+    if(e.target.id!=='gh-avatar-upload' || !e.target.files.length)return;
+    try {
+      const pic=await createImageBitmap(e.target.files[0]),size=Math.min(pic.width,pic.height),canvas=document.createElement('canvas');
+      canvas.width=canvas.height=160;
+      canvas.getContext('2d').drawImage(pic,(pic.width-size)/2,(pic.height-size)/2,size,size,0,0,160,160);pic.close();
+      await current.api('me/avatar',{method:'PUT',body:{png:canvas.toDataURL('image/png').split(',')[1]}});await current.refresh();
+    } catch(error){current.notify(error.message);}
+  });
+  document.addEventListener('click',e=>{if(e.target.id==='gh-avatar-reset')current.api('me/avatar',{method:'DELETE'}).then(()=>current.refresh()).catch(err=>current.notify(err.message));});
   window.GitpolarGithub = {
     isGithub,
     dashboard,
@@ -472,7 +456,8 @@
     issuePage,
     repositoryOverview,
     pullCount(c, repo) {
-      if (repo.kind !== 'album' || !c.onServer || !canTeam(c)) return null;
+      if (!c.onServer || !canTeam(c)) return null;
+      if(repo.kind!=='album')return (c.codePulls||[]).filter(p=>p.repo===repo.name && p.state==='open').length;
       current = c;
       const result = loadCached(c, repo.name, 'repos/' + repo.name + '/album/pulls', requestCache);
       return result.data?.pulls.filter((p) => p.state === 'open').length ?? null;

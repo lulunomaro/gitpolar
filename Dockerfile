@@ -1,6 +1,6 @@
 FROM node:24-bookworm-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git git-lfs ca-certificates python3 python3-pil \
+    && apt-get install -y --no-install-recommends git git-lfs ca-certificates python3 python3-pil python3-yaml bubblewrap util-linux bash \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --chown=node:node package.json package-lock.json ./

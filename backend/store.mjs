@@ -23,6 +23,7 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS tokens (id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL REFERENCES users(id), name TEXT NOT NULL, created_at TEXT NOT NULL, last_used TEXT);
   CREATE TABLE IF NOT EXISTS repos (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL, creator_id INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'creating');
+  CREATE TABLE IF NOT EXISTS repo_forks (repo_id TEXT PRIMARY KEY REFERENCES repos(id), parent_id TEXT NOT NULL REFERENCES repos(id), root_id TEXT NOT NULL REFERENCES repos(id));
   CREATE TABLE IF NOT EXISTS lfs_objects (repo_id TEXT NOT NULL REFERENCES repos(id), oid TEXT NOT NULL, size INTEGER NOT NULL, complete INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(repo_id,oid));
   CREATE TABLE IF NOT EXISTS locks (id TEXT PRIMARY KEY, repo_id TEXT NOT NULL REFERENCES repos(id), path TEXT NOT NULL, owner_id INTEGER NOT NULL REFERENCES users(id), locked_at TEXT NOT NULL, UNIQUE(repo_id,path));
   CREATE TABLE IF NOT EXISTS issues (id INTEGER PRIMARY KEY, number INTEGER NOT NULL, repo_id TEXT NOT NULL REFERENCES repos(id), author_id INTEGER NOT NULL REFERENCES users(id), title TEXT NOT NULL, body TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, UNIQUE(repo_id,number));

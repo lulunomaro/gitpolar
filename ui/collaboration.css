@@ -1,0 +1,178 @@
+.co-page {
+  max-width: 1200px;
+  margin: 16px auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.co-page h1 {
+  font-size: clamp(23px, 3vw, 32px);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.co-page h2,
+.co-box h2 {
+  font-size: 18px;
+  margin: 0 0 12px;
+}
+.co-page h3 {
+  font-size: 15px;
+  margin: 4px 0;
+}
+.co-box,
+.co-comment,
+.co-details {
+  padding: 16px;
+  margin: 12px 0;
+  border: 1px solid var(--border, #d1d9e0);
+  border-radius: 6px;
+  min-width: 0;
+}
+.co-box:empty {
+  display: none;
+}
+.co-row,
+.co-actions,
+.co-refs,
+.co-tabs,
+.co-comment header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.co-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border, #d1d9e0);
+}
+.co-row:last-child {
+  border: 0;
+}
+.co-row p {
+  margin: 2px 0;
+}
+.co-tabs {
+  margin: 16px 0;
+  border-bottom: 1px solid var(--border, #d1d9e0);
+}
+.co-tabs a {
+  padding: 8px 6px;
+  color: inherit;
+}
+.co-tabs [aria-current] {
+  border-bottom: 2px solid #fd8c73;
+  font-weight: 600;
+}
+.co-state {
+  display: inline-flex;
+  border-radius: 2em;
+  padding: 2px 9px;
+  background: #59636e;
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+}
+.co-state.open,
+.co-state.success {
+  background: #1a7f37;
+}
+.co-state.merged {
+  background: #8250df;
+}
+.co-state.failure {
+  background: #b62324;
+}
+.co-state.running {
+  background: #825400;
+}
+.co-body,
+.co-comment p {
+  white-space: pre-wrap;
+}
+.co-comment header,
+.co-run summary,
+.co-item small,
+.co-row small {
+  color: var(--muted, #656d76);
+}
+.co-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(200px, 1fr);
+  gap: 24px;
+}
+.co-page form,
+.co-box form,
+[data-collab-form='inbox-settings'] {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  margin: 12px 0;
+}
+.co-page .field {
+  width: 100%;
+  min-width: 0;
+}
+.co-refs > .field {
+  width: auto;
+  flex: 1 1 140px;
+}
+.co-refs {
+  width: 100%;
+}
+.co-page select,
+.co-page input,
+.co-page textarea {
+  max-width: 100%;
+}
+.co-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.co-board > section {
+  border: 1px solid var(--border, #d1d9e0);
+  border-radius: 6px;
+  padding: 10px;
+}
+.co-item,
+.co-run {
+  padding: 10px 0;
+}
+.co-item small {
+  display: block;
+}
+.co-item summary,
+.co-run summary,
+.co-details summary {
+  cursor: pointer;
+}
+.co-diff {
+  white-space: pre;
+  overflow: auto;
+  max-height: 480px;
+  max-width: 100%;
+  font-size: 12px;
+  tab-size: 4;
+}
+.co-loading {
+  margin: 16px;
+  color: var(--muted);
+}
+[data-collab-form] [role='alert'] {
+  color: #cf222e;
+}
+.notification-dot[hidden] {
+  display: none !important;
+}
+@media (max-width: 760px) {
+  .co-board,
+  .co-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .co-box,
+  .co-comment {
+    padding: 12px;
+  }
+  .co-page .gh-feed-head {
+    flex-wrap: wrap;
+  }
+}

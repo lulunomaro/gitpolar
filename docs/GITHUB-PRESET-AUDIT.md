@@ -32,6 +32,12 @@ controls; PR state filters and compact metadata.
 | 9 | Keyboard, mobile and regression verification | Complete. Real browser flows pass at 320px and 390px across repo/issues/PRs/album/procurement/admin; no document overflow or JavaScript errors. |
 | 10 | NAS release, live verification and Git delivery | Complete. Staged against the actual current NAS release; 5 NAS tests passed. Activated, verified assets and Feishu gates; delivery is the commit containing this record. |
 
+## Follow-up implementation · 2026-11-28
+
+The subsequent collaboration release delivers repository forks and cross-fork PRs, reviews and file discussion, manual CAD assembly merges, issue assignments and labels, a personal notification inbox, project boards and saved views, versioned file packages, private reports, SARIF ingestion and an isolated Linux workflow runner. Profile avatars and the default trailing-year calendar are now available. The operational paths and supported workflow steps are in [the collaboration guide](REPOSITORY-COLLABORATION.md).
+
+The following sections record the **original ten-round audit**, before the collaboration release.
+
 ## Intentional and remaining differences
 
 - Gitpolar branding and Feishu-only production login are intentional.

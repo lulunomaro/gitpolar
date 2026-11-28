@@ -1,8 +1,13 @@
+import { createHash } from 'node:crypto';
+import { createInterface } from 'node:readline';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { db, getUser } from './store.mjs';
 import { authenticate, requireOrigin, body, json, fail } from './auth.mjs';
-import { git } from './git.mjs';
+import { repoPath } from './git.mjs';
 
-db.exec(`CREATE TABLE IF NOT EXISTS ui_preferences (
+db.exec(`CREATE TABLE IF NOT EXISTS profile_avatars(user_id INTEGER PRIMARY KEY REFERENCES users(id),bytes BLOB NOT NULL,version TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ui_preferences (
  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
  preset TEXT NOT NULL DEFAULT 'github', color_mode TEXT NOT NULL DEFAULT 'light');
 CREATE TABLE IF NOT EXISTS user_profiles (
@@ -34,18 +39,13 @@ function safeField(value, max) {
     fail(400, '资料格式或长度不正确。');
   return value.trim();
 }
-const localDay = (value) =>
-  new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(value));
-
-async function contributionActivity(user, year, repositories) {
+const dayFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'});
+const localDay = value => dayFormatter.format(new Date(value));
+const isoDayOffset=(day,n)=>new Date(Date.parse(day+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
+async function contributionActivity(user, first, last, repositories, years) {
   const activity = [];
-  const start = new Date(`${year}-01-01T00:00:00+08:00`).toISOString();
-  const end = new Date(Date.UTC(Number(year) + 1, 0, 1) - 8 * 3600000).toISOString();
+  const start = new Date(first+'T00:00:00+08:00').toISOString();
+  const end = new Date(new Date(last+'T00:00:00+08:00').getTime()+86400000).toISOString();
   const names = new Set(
     [user.username, user.name, profile(user.id).display_name].filter(Boolean).map((n) => n.toLowerCase())
   );
@@ -53,34 +53,24 @@ async function contributionActivity(user, year, repositories) {
   for (let i = 0; i < repositories.length; i += 4) {
     const batch = await Promise.all(
       repositories.slice(i, i + 4).map(async (repo) => {
-        const text = await git(
-          repo.name,
-          [
-            'log',
-            '--all',
-            // Git log's date limits filter committer dates. Contributions use author dates,
-            // so filter the recorded author day below even for rebased/imported commits.
-            '--format=%H%x00%aI%x00%an%x00%ae%x00%s',
-            '-8000',
-          ],
-          { allowFailure: true }
-        );
-        const seen = new Set(),
-          events = [];
-        for (const line of text.trim().split('\n')) {
+        // Read the full reachable history without buffering the entire Git log or cutting off rebased author dates.
+        const child=spawn('git',['--git-dir='+repoPath(repo.name),'log','--branches','--tags','--format=%H%x00%aI%x00%an%x00%ae%x00%s'],{stdio:['ignore','pipe','ignore'],windowsHide:true});
+        const closed=once(child,'close');
+        const events=[];
+        for await(const line of createInterface({input:child.stdout,crlfDelay:Infinity})) {
           const [oid, date, author, email, message] = line.split('\0');
-          if (!date || seen.has(oid)) continue;
-          const day = localDay(date);
-          if (!day.startsWith(year + '-')) continue;
+          if (!date) continue;
           if (
             !names.has(author.toLowerCase()) &&
             email.toLowerCase() !== handle + '@gitpolar.local' &&
             email.toLowerCase() !== handle + '@local'
           )
             continue;
-          seen.add(oid);
+          const day=localDay(date);years.add(Number(day.slice(0,4)));
+          if(day<first || day>last) continue;
           events.push({ type: 'commit', repo: repo.name, oid, date: day, message });
         }
+        if((await closed)[0]!==0) throw Error('Unable to read contribution history.');
         return events;
       })
     );
@@ -100,9 +90,26 @@ async function contributionActivity(user, year, repositories) {
       message: i.title,
     }))
   );
+  for(const [table,author,type] of [['code_pulls','author_id','pull'],['album_pulls','author_id','album']]) {
+    const rows=db.prepare(`SELECT p.number,p.title,p.created_at,r.name FROM ${table} p JOIN repos r ON r.id=p.repo_id WHERE p.${author}=? AND r.status='ready' AND p.created_at>=? AND p.created_at<?`).all(user.id,start,end);
+    activity.push(...rows.map(p=>({type,number:p.number,message:p.title,date:localDay(p.created_at),repo:p.name})));
+  }
   return activity;
 }
 export async function interfaceApi(req, res, path, params) {
+  if(path==='/api/me/avatar' && ['PUT','DELETE'].includes(req.method)) {
+    const user=viewer(req,true);
+    if(req.method==='DELETE') db.prepare('DELETE FROM profile_avatars WHERE user_id=?').run(user.id);
+    else {
+      const v=await body(req,400000),encoded=v.png;
+      if(typeof encoded!=='string' || !/^[a-zA-Z0-9+/]+=*$/.test(encoded)) fail(400,'Invalid PNG avatar.');
+      const bytes=Buffer.from(encoded,'base64');
+      if(bytes.length<33||bytes.length>256*1024||bytes.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||bytes.toString('ascii',12,16)!=='IHDR'||bytes.readUInt32BE(16)>512||bytes.readUInt32BE(20)>512)fail(400,'Upload a PNG of up to 512 × 512 pixels.');
+      const version=createHash('sha256').update(bytes).digest('hex').slice(0,16);
+      db.prepare('INSERT INTO profile_avatars VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET bytes=excluded.bytes,version=excluded.version').run(user.id,bytes,version);
+    }
+    return json(res,{ok:true});
+  }
   if (path === '/api/me/appearance') {
     const user = viewer(req, req.method !== 'GET');
     if (req.method === 'GET')
@@ -171,7 +178,7 @@ export async function interfaceApi(req, res, path, params) {
     ).run(user.id, next.display_name, next.bio, next.company, next.location, next.website, next.pins);
     return json(res, { ok: true });
   }
-  const match = /^\/api\/profiles\/([a-z0-9][a-z0-9_-]{0,47})(?:\/(follow|followers|following))?$/.exec(path);
+  const match = /^\/api\/profiles\/([a-z0-9][a-z0-9_-]{0,47})(?:\/(follow|followers|following|avatar))?$/.exec(path);
   if (!match) fail(404, 'Interface route not found.');
   const current = viewer(req, req.method !== 'GET');
   const row = db.prepare('SELECT id,created_at FROM users WHERE username=?').get(match[1]);
@@ -181,6 +188,10 @@ export async function interfaceApi(req, res, path, params) {
     fail(404, '找不到这个用户。');
   const user = getUser(row.id),
     p = profile(user.id);
+  if(match[2]==='avatar' && req.method==='GET') {
+    const pic=db.prepare('SELECT bytes FROM profile_avatars WHERE user_id=?').get(user.id);if(!pic)fail(404,'Avatar not found.');
+    return res.writeHead(200,{'Content-Type':'image/png'}).end(Buffer.from(pic.bytes));
+  }
   if (match[2] === 'follow') {
     if (current.personalOnly || current.id === user.id) fail(400, '请选择其他团队成员。');
     if (req.method === 'PUT')
@@ -217,7 +228,15 @@ export async function interfaceApi(req, res, path, params) {
         )
         .all(user.id)
         .map((r) => r.name);
-  const activity = current.personalOnly ? [] : await contributionActivity(user, year, repositories);
+  const today=localDay(new Date()),trailing=!params.has('year');
+  const first=trailing?isoDayOffset(today,-364):year+'-01-01',last=trailing?today:year+'-12-31';
+  const years=new Set([Number(year),Number(localDay(row.created_at).slice(0,4))]);
+  if(!current.personalOnly) for(const [table,column] of [['issues','author_id'],['code_pulls','author_id'],['album_pulls','author_id']]) {
+    for(const entry of db.prepare(`SELECT DISTINCT strftime('%Y',created_at,'+8 hours') y FROM ${table} WHERE ${column}=?`).all(user.id))if(entry.y)years.add(Number(entry.y));
+  }
+  const activity=current.personalOnly?[]:await contributionActivity(user,first,last,repositories,years);
+  const personalProjects=current.personalOnly?[]:db.prepare("SELECT p.id,p.title,r.name repo FROM repo_projects p JOIN repos r ON r.id=p.repo_id WHERE p.owner_id=? AND r.status='ready'").all(user.id);
+  const packages=current.personalOnly?[]:db.prepare("SELECT p.name,p.version,r.name repo FROM repo_packages p JOIN repos r ON r.id=p.repo_id WHERE p.publisher=? AND r.status='ready' ORDER BY p.id DESC").all(user.id);
   const days = {};
   for (const event of activity) days[event.date] = (days[event.date] || 0) + 1;
   return json(res, {
@@ -232,7 +251,7 @@ export async function interfaceApi(req, res, path, params) {
     pins: JSON.parse(p.pins).filter((n) => repositories.some((r) => r.name === n)),
     repositories: repositories.filter((r) => r.creator_id === user.id).map((r) => r.name),
     starred,
-    year,
+    year,first,last,trailing,years:[...years],projects:personalProjects,packages,
     days,
     total: activity.length,
     activity: activity.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30),

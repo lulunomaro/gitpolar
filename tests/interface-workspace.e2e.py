@@ -8,6 +8,41 @@ from playwright.sync_api import sync_playwright,expect
 
 ROOT=Path(__file__).resolve().parents[1];ART=Path(sys.argv[1]) if len(sys.argv)>1 else ROOT/'artifacts'/'interface-ui';ART.mkdir(parents=True,exist_ok=True)
 
+def collaboration_ui(origin,browser,owner,errors):
+    headers={'Origin':origin}
+    password='local-browser-review-fixture'
+    assert owner.request.post(origin+'/api/users',data={'username':'reviewwriter','password':password,'role':'writer'},headers=headers).ok
+    assert owner.request.post(origin+'/api/repos',data={'name':'review-ui'},headers=headers).ok
+    assert owner.request.post(origin+'/api/repos/review-ui/branches',data={'name':'revision','from':'main'},headers=headers).ok
+    writer=browser.new_context(viewport={'width':1280,'height':900})
+    try:
+        assert writer.request.post(origin+'/api/login',data={'username':'reviewwriter','password':password},headers=headers).ok
+        assert writer.request.put(origin+'/api/repos/review-ui/file',data={'branch':'revision','path':'revision.txt','text':'release candidate'},headers=headers).ok
+        def page(ctx,path):
+            tab=ctx.new_page();tab.on('pageerror',lambda e:errors.append(str(e)));tab.goto(origin+path);return tab
+        author=page(writer,'/#/repos/review-ui/pulls')
+        author.get_by_role('link',name='New pull request',exact=True).click()
+        author.get_by_label('Compare branch').select_option('revision')
+        author.get_by_label('Title',exact=True).fill('Review team changes')
+        author.get_by_role('button',name='Create pull request').click()
+        expect(author.get_by_role('heading',name='Review team changes #1')).to_be_visible()
+        reviewer=page(owner,'/#/pulls');reviewer.get_by_role('link',name='Review team changes').click()
+        reviewer.get_by_role('link',name='Files changed').click();reviewer.get_by_role('link',name='revision.txt',exact=True).click()
+        expect(reviewer.locator('.co-diff')).to_contain_text('+release candidate')
+        reviewer.get_by_role('link',name='Conversation').click();reviewer.get_by_label('Review summary').fill('Ready for integration')
+        reviewer.get_by_role('button',name='Submit review').click();expect(reviewer.locator('.co-comment')).to_contain_text('Ready for integration')
+        reviewer.screenshot(path=str(ART/'pull-review.png'),full_page=True)
+        reviewer.get_by_role('button',name='Merge pull request').click();expect(reviewer.locator('.co-state.merged')).to_be_visible()
+        author.goto(origin+'/#/notifications');expect(author.get_by_role('link',name='Review team changes',exact=True)).to_be_visible()
+        author.get_by_role('link',name='Review team changes',exact=True).click();expect(author.locator('.co-state.merged')).to_be_visible()
+        for width in [320,390]:
+            reviewer.set_viewport_size({'width':width,'height':900})
+            for area,title in [('pulls/1','Review team changes #1'),('forks','Forks'),('branches','Branches'),('projects','Projects'),('actions','Actions'),('security','Security and quality'),('packages','Packages')]:
+                reviewer.goto(origin+'/#/repos/review-ui/'+area);expect(reviewer.get_by_role('heading',name=title,exact=True).first).to_be_visible()
+                assert reviewer.evaluate('document.documentElement.scrollWidth<=innerWidth'),(area,width)
+        reviewer.close();author.close()
+    finally: writer.close()
+
 def run(origin,browser,data_dir):
     ctx=browser.new_context(viewport={'width':1440,'height':960},locale='zh-CN',color_scheme='light')
     errors=[]
@@ -60,9 +95,9 @@ def run(origin,browser,data_dir):
     page.goto(origin+'/#/repos/robot-mechanical');page.locator('.branch-picker summary').click();page.get_by_role('searchbox',name='Find a branch',exact=True).fill('design/preview');page.get_by_role('searchbox',name='Find a branch',exact=True).press('ArrowDown');page.keyboard.press('Enter');expect(page.locator('.branch-picker summary')).to_contain_text('design/preview')
     page.goto(origin+'/#/repos/robot-mechanical/issues');expect(page.locator('.gh-issue-sidebar')).to_be_visible();expect(page.locator('.gh-issue-list > li')).to_have_count(2);page.get_by_role('link',name='Created by me',exact=True).click();expect(page.locator('.gh-issue-list > li')).to_have_count(1)
     page.locator('#gh-list-search input').fill('is:issue author:member');page.locator('#gh-list-search input').press('Enter');expect(page.locator('.gh-issue-list')).to_contain_text('Member fixture issue');expect(page.locator('.gh-issue-list')).not_to_contain_text('装配体预览与图纸审核');page.get_by_role('link',name='Compact display density',exact=True).click();expect(page.locator('.gh-compact-list')).to_be_visible();page.screenshot(path=str(ART/'github-issues.png'),full_page=True)
-    page.goto(origin+'/#/repos/robot-mechanical/pulls');expect(page.locator('.gh-pulls-page')).to_contain_text('普通代码 PR')
+    page.goto(origin+'/#/repos/robot-mechanical/pulls');expect(page.locator('.gh-pulls-page')).to_contain_text('New pull request')
     page.goto(origin+'/#/repos/robot-mechanical/wiki');expect(page.locator('.markdown')).to_contain_text('README.md')
-    page.goto(origin+'/#/repos/robot-mechanical/security');expect(page.locator('.panel')).to_contain_text('No scanning service is connected')
+    page.goto(origin+'/#/repos/robot-mechanical/security');expect(page.get_by_role('heading',name='Code scanning alerts')).to_be_visible()
     page.goto(origin+'/#/repos/robot-mechanical/graph');expect(page.locator('.git-graph-page')).to_be_visible()
     page.goto(origin+'/procurement/');expect(page.locator('.gp-global')).to_be_visible();expect(page.locator('#tabs')).to_be_visible();assert page.locator('#tabs').evaluate('(e)=>getComputedStyle(e).position')=='static';assert page.locator('body').evaluate('(e)=>getComputedStyle(e).paddingLeft')=='0px';page.screenshot(path=str(ART/'github-procurement.png'),full_page=True)
     page.get_by_role('button',name='Open user menu',exact=True).click();expect(page.locator('#gp-account[open]')).to_be_visible();expect(page.get_by_role('button',name='Sign out',exact=True)).to_be_visible();page.keyboard.press('Escape');expect(page.locator('#gp-account')).not_to_be_visible()
@@ -81,10 +116,11 @@ def run(origin,browser,data_dir):
             if key=='repo':
                 page.locator('.tree-visibility').click();expect(page.locator('.repo-tree')).to_be_visible();page.locator('.tree-visibility').click();expect(page.locator('.repo-tree')).not_to_be_visible()
         page.get_by_role('button',name='Open navigation menu',exact=True).click();expect(page.locator('#gp-navigation[open]')).to_be_visible();page.keyboard.press('Escape')
+    collaboration_ui(origin,browser,ctx,errors)
     assert not errors,errors
     ctx.close()
     guest=browser.new_context(viewport={'width':1440,'height':960});p=guest.new_page();p.goto(origin+'/login/');expect(p.locator('.login-card')).to_be_visible();assert p.locator('.login-page').evaluate('(e)=>getComputedStyle(e,"::after").backgroundImage')=='none';p.screenshot(path=str(ART/'github-login-desktop.png'),full_page=True);p.set_viewport_size({'width':390,'height':844});assert p.evaluate('document.documentElement.scrollWidth<=innerWidth');p.screenshot(path=str(ART/'github-login.png'),full_page=True);guest.close()
-    print(json.dumps({'dashboard':True,'profileSaved':True,'realContributions':True,'savedPresetRestored':True,'darkTheme':True,'repositoryAndGraph':True,'businessPages':True,'followingFeed':True,'tagAndBranchKeyboard':True,'yearSelection':True,'authorSearchAndDensity':True,'globalIssueRepositorySelection':True,'businessAccountDrawer':True,'mobileWidths':[320,390],'mobileOverflow':False,'browserErrors':errors}))
+    print(json.dumps({'browserPullReviewAndMerge':True,'dashboard':True,'profileSaved':True,'realContributions':True,'savedPresetRestored':True,'darkTheme':True,'repositoryAndGraph':True,'businessPages':True,'followingFeed':True,'tagAndBranchKeyboard':True,'yearSelection':True,'authorSearchAndDensity':True,'globalIssueRepositorySelection':True,'businessAccountDrawer':True,'mobileWidths':[320,390],'mobileOverflow':False,'browserErrors':errors}))
 
 if __name__=='__main__':
  with TemporaryDirectory(prefix='gitpolar-github-ui-') as temp,socket.socket() as s:

@@ -1,5 +1,7 @@
 # 协作交接 · 0.7.0
 
+日常仓库操作见[仓库协作指南](REPOSITORY-COLLABORATION.md)。
+
 本次工作在 codex/repository-context 分支，起点为 118e216。协作者先拉取远端分支，再按 .env.example 配置自己的 NAS/开发机环境。不要共享 .env、正式 data/ 或账号令牌。
 
 ## 模块分工

@@ -14,6 +14,7 @@ try {
   const tips=[];
   for(const line of input.trim().split('\n').filter(Boolean)) {
     const [oldOid,newOid,ref]=line.split(' ');
+    if (/^refs\/gitpolar\//i.test(ref)) throw Error('Gitpolar manages this internal ref.');
     const restriction=albumRefError(repo,ref,userId);
     if (restriction) throw new Error(restriction);
     if(newOid===zero)continue;
